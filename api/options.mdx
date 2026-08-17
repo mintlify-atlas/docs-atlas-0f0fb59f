@@ -1,0 +1,351 @@
+---
+title: "CommentOverlayOptions — HellDots configuration reference"
+sidebarTitle: "Options"
+description: "Every option accepted by createCommentOverlay: identity, persistence, screenshots, navigation, keyboard shortcuts, and all nine callback signatures."
+---
+
+Every HellDots instance is configured through a single plain-object argument passed to `createCommentOverlay`. All options are optional — calling the function with no arguments mounts a fully functional overlay that saves to memory, uses the browser's detected language, and is toggled with <kbd>Alt</kbd>+<kbd>C</kbd>.
+
+```ts
+import { createCommentOverlay } from "helldots";
+
+const overlay = createCommentOverlay({
+  user: { name: "Ana" },
+  persistence: "localStorage",
+  autoScreenshot: true,
+  embedCrossOriginFonts: false,
+  locale: "en",
+  linkParam: "helldotsComment",
+  autoDetectNavigation: true,
+  shortcutKey: "c",
+  shortcutModifier: "alt",
+  autoInit: true,
+  navigate: (page) => router.push(page),
+  onChange: (event) => api.post("/helldots-events", event),
+  onCommentCreated: (comment) => api.post("/comments", comment),
+  onCommentDeleted: (id) => api.delete(`/comments/${id}`),
+  onCommentStatusChanged: (comment) =>
+    api.patch(`/comments/${comment.id}`, { status: comment.status }),
+  onCommentUpdated: (comment) => api.patch(`/comments/${comment.id}`, comment),
+  onCommentEdited: (comment) => api.patch(`/comments/${comment.id}`, comment),
+  onReplyAdded: (comment, reply) =>
+    api.post(`/comments/${comment.id}/replies`, reply),
+  onReplyDeleted: (comment, reply) =>
+    api.delete(`/comments/${comment.id}/replies/${reply.id}`),
+  onReplyEdited: (comment, reply) =>
+    api.patch(`/comments/${comment.id}/replies/${reply.id}`, reply),
+  onAnchorLost: (comment) => console.warn("anchor lost", comment.id),
+});
+```
+
+---
+
+## Identity
+
+<ParamField body="user" type="{ name: string }" optional>
+  The author identity stamped on every new comment and reply created by this
+  instance. When omitted the widget falls back to the locale's "Anonymous"
+  string.
+
+  ```js
+  createCommentOverlay({ user: { name: "Ana" } });
+  ```
+</ParamField>
+
+---
+
+## Persistence
+
+<ParamField body="persistence" type='"localStorage" | "none"' default='"none"' optional>
+  Controls whether HellDots automatically saves and restores comments.
+
+  - **`"none"`** (default) — comments live only in memory for the current
+    session. Use the [callback options](/api/callbacks) to sync with your own
+    backend.
+  - **`"localStorage"`** — all comments (including screenshots) are
+    serialized under a single `localStorage` key shared across every page of
+    your app. Browsers cap this at roughly 5 MB. When the quota is reached,
+    HellDots sheds the automatic screenshots of the oldest comments and
+    retries, so the comments themselves survive.
+
+  <Note>
+    `localStorage` mode assumes one active tab per page. Two tabs editing
+    the same comment concurrently resolve last-write-wins. If you need
+    reliable multi-tab editing, wire your own backend through the callbacks
+    instead.
+  </Note>
+
+  ```js
+  createCommentOverlay({ persistence: "localStorage" });
+  ```
+</ParamField>
+
+---
+
+## Screenshots
+
+<ParamField body="autoScreenshot" type="boolean" default="true" optional>
+  When `true` (the default), HellDots captures a JPEG viewport screenshot and
+  an environment snapshot (`CommentContext`) every time a new comment is saved.
+  The screenshot is stored as a data-URL on the comment's `contextScreenshot`
+  field.
+
+  Set to `false` to skip the capture entirely — useful when the render cost
+  matters or when your app already captures its own screenshots.
+
+  ```js
+  createCommentOverlay({ autoScreenshot: false });
+  ```
+
+  See the [Screenshots guide](/guides/screenshots) for full details on how
+  captures work and their limitations.
+</ParamField>
+
+<ParamField body="embedCrossOriginFonts" type="boolean" default="false" optional>
+  When `true`, HellDots re-fetches any cross-origin stylesheets (such as Google
+  Fonts) that the browser's CORS policy makes unreadable during a screenshot
+  render. This ensures web fonts appear correctly in captures instead of falling
+  back to a system face that shifts glyph positions.
+
+  Off by default because it causes the widget to make third-party network
+  requests on behalf of your users — that decision should belong to the host
+  app.
+
+  <Tip>
+    The cheapest fix is usually self-hosting the font, or adding
+    `crossorigin="anonymous"` to the `<link>` tag. Either approach makes
+    the stylesheet readable without any extra requests at capture time. See
+    the [Screenshots guide](/guides/screenshots) for all three options.
+  </Tip>
+
+  ```js
+  createCommentOverlay({ embedCrossOriginFonts: true });
+  ```
+</ParamField>
+
+---
+
+## Navigation
+
+<ParamField body="locale" type="string" optional>
+  The UI language code for the widget. HellDots ships translations for `"en"`
+  (English) and `"es"` (Spanish). Any other value degrades gracefully: an
+  unknown code falls back to English wholesale; a known code that is missing
+  individual keys falls back per key, so a partially translated locale never
+  shows `"undefined"` in the UI.
+
+  When omitted, the locale is detected from `navigator.language` at
+  initialization time.
+
+  ```js
+  createCommentOverlay({ locale: "es" });
+  ```
+</ParamField>
+
+<ParamField body="linkParam" type="string" default='"helldotsComment"' optional>
+  The URL query parameter name used by the widget's "Copy link" button and read
+  back on startup to open a specific comment. Override this when your app
+  already uses that parameter name for another purpose.
+
+  ```js
+  createCommentOverlay({ linkParam: "commentId" });
+  // → /pricing?commentId=abc123
+  ```
+</ParamField>
+
+<ParamField body="navigate" type="(page: string) => void" optional>
+  A router hook called instead of a full-page reload when the widget navigates
+  to another page (for example when a user clicks "view on its page" in the
+  inbox for a comment on a different route).
+
+  Pass your SPA router's push method so the app's client-side state survives
+  the jump. After the route renders its new DOM, call
+  `overlay.notifyNavigation()` so HellDots re-anchors comments against the new
+  elements.
+
+  When omitted, the widget falls back to `location.assign(url)`.
+
+  ```js
+  // React Router / Next.js / Vue Router / etc.
+  createCommentOverlay({
+    navigate: (page) => router.push(page),
+  });
+
+  // After every route render:
+  router.afterEach(() => overlay.notifyNavigation());
+  ```
+</ParamField>
+
+<ParamField body="autoDetectNavigation" type="boolean" default="false" optional>
+  When `true`, the widget automatically calls `notifyNavigation()` on
+  `popstate` events (browser back/forward). This is opt-in and covers only
+  history-based navigation — `pushState` routing still requires an explicit
+  `notifyNavigation()` call from the router's own after-navigation hook.
+
+  ```js
+  createCommentOverlay({ autoDetectNavigation: true });
+  ```
+</ParamField>
+
+---
+
+## Keyboard shortcut
+
+<ParamField body="shortcutKey" type="string" default='"c"' optional>
+  The key that, together with `shortcutModifier`, toggles comment mode. Accepts
+  any single printable character recognized by `KeyboardEvent.key`. On macOS,
+  `Alt`+letter produces a dead character (e.g. `Alt`+`C` → `ç`), so HellDots
+  also matches against `KeyboardEvent.code` for letter keys.
+
+  ```js
+  createCommentOverlay({ shortcutKey: "k" }); // Alt+K
+  ```
+</ParamField>
+
+<ParamField body="shortcutModifier" type='"alt" | "ctrl" | "shift"' default='"alt"' optional>
+  The modifier key that must be held together with `shortcutKey` to toggle
+  comment mode.
+
+  - `"alt"` — `Alt` (Windows/Linux) or `Option` (macOS)
+  - `"ctrl"` — `Ctrl` (Windows/Linux) or `Cmd` (macOS, matched via `metaKey`)
+  - `"shift"` — `Shift`
+
+  ```js
+  createCommentOverlay({ shortcutModifier: "ctrl", shortcutKey: "k" });
+  ```
+</ParamField>
+
+<ParamField body="autoInit" type="boolean" default="true" optional>
+  When `true` (the default), `createCommentOverlay` mounts the widget
+  immediately — or defers to `DOMContentLoaded` if the document is still
+  loading.
+
+  When set to `false`, `createCommentOverlay` returns an initializer function
+  instead of a live `CommentOverlay` instance. Call that function when you are
+  ready to mount the widget.
+
+  ```ts
+  // autoInit: false — deferred mounting
+  const init = createCommentOverlay({ autoInit: false, user: { name: "Ana" } });
+
+  // Mount later (e.g. after your auth check resolves):
+  const overlay = init();
+  ```
+</ParamField>
+
+---
+
+## Callbacks
+
+All callback options are documented in detail on the [Callbacks](/api/callbacks) reference page. The table below lists every callback with its signature for quick reference.
+
+| Callback | Signature | Fires when |
+|---|---|---|
+| `onChange` | `(event: ChangeEvent) => void` | Every mutation — a unified event stream |
+| `onCommentCreated` | `(comment: SerializedComment) => void` | A new comment is saved |
+| `onReplyAdded` | `(comment: SerializedComment, reply: CommentReply) => void` | A reply is added |
+| `onReplyDeleted` | `(comment: SerializedComment, reply: CommentReply) => void` | A reply is removed |
+| `onCommentEdited` | `(comment: SerializedComment) => void` | A comment's text is rewritten |
+| `onReplyEdited` | `(comment: SerializedComment, reply: CommentReply) => void` | A reply's text is rewritten |
+| `onCommentStatusChanged` | `(comment: SerializedComment) => void` | Status changes |
+| `onCommentUpdated` | `(comment: SerializedComment) => void` | Type, priority, or tags change |
+| `onCommentDeleted` | `(id: CommentId) => void` | A comment is removed |
+| `onAnchorLost` | `(comment: SerializedComment) => void` | A comment can't be re-anchored on load |
+
+<ParamField body="onChange" type="(event: ChangeEvent) => void" optional>
+  A single subscription point that fires for every change, alongside whichever
+  specific callback carries the same event. Useful when your backend syncs
+  everything through one endpoint. See [Callbacks — onChange](/api/callbacks#onchange) for full details including a `switch` example and TypeScript narrowing.
+</ParamField>
+
+<ParamField body="onCommentCreated" type="(comment: SerializedComment) => void" optional>
+  Fired after a new comment is saved. The `comment` argument is a full
+  `SerializedComment` snapshot including the anchor, context, and any
+  screenshots captured at creation time.
+
+  ```js
+  onCommentCreated: (comment) => api.post("/comments", comment)
+  ```
+</ParamField>
+
+<ParamField body="onReplyAdded" type="(comment: SerializedComment, reply: CommentReply) => void" optional>
+  Fired after a reply is added to any comment. Both the updated parent comment
+  and the new `CommentReply` are provided.
+
+  ```js
+  onReplyAdded: (comment, reply) =>
+    api.post(`/comments/${comment.id}/replies`, reply)
+  ```
+</ParamField>
+
+<ParamField body="onReplyDeleted" type="(comment: SerializedComment, reply: CommentReply) => void" optional>
+  Fired after a reply is removed. The parent comment (now without the reply)
+  and the deleted reply object are both provided.
+
+  ```js
+  onReplyDeleted: (comment, reply) =>
+    api.delete(`/comments/${comment.id}/replies/${reply.id}`)
+  ```
+</ParamField>
+
+<ParamField body="onCommentEdited" type="(comment: SerializedComment) => void" optional>
+  Fired after `editComment` rewrites a comment's text. The updated comment
+  snapshot includes the new `text` and a fresh `editedAt` ISO timestamp.
+
+  ```js
+  onCommentEdited: (comment) =>
+    api.patch(`/comments/${comment.id}`, { text: comment.text })
+  ```
+</ParamField>
+
+<ParamField body="onReplyEdited" type="(comment: SerializedComment, reply: CommentReply) => void" optional>
+  Fired after `editReply` rewrites a reply's text. Carries both the updated
+  parent comment and the edited reply.
+
+  ```js
+  onReplyEdited: (comment, reply) =>
+    api.patch(`/comments/${comment.id}/replies/${reply.id}`, { text: reply.text })
+  ```
+</ParamField>
+
+<ParamField body="onCommentStatusChanged" type="(comment: SerializedComment) => void" optional>
+  Fired after `setCommentStatus` moves a comment through its lifecycle
+  (`"open"` → `"in_progress"` → `"resolved"`). When the new status is
+  `"resolved"`, the comment's `resolvedAt` field is stamped with the current
+  ISO timestamp.
+
+  ```js
+  onCommentStatusChanged: (comment) =>
+    api.patch(`/comments/${comment.id}`, { status: comment.status })
+  ```
+</ParamField>
+
+<ParamField body="onCommentUpdated" type="(comment: SerializedComment) => void" optional>
+  Fired after `setCommentType`, `setCommentPriority`, or `setCommentTags`
+  changes the classification fields of a comment. The updated snapshot includes
+  the new `type`, `priority`, and `tags`.
+
+  ```js
+  onCommentUpdated: (comment) => api.patch(`/comments/${comment.id}`, comment)
+  ```
+</ParamField>
+
+<ParamField body="onCommentDeleted" type="(id: CommentId) => void" optional>
+  Fired after `deleteComment` removes a comment. Only the `id` is passed — the
+  comment object is no longer in memory at this point.
+
+  ```js
+  onCommentDeleted: (id) => api.delete(`/comments/${id}`)
+  ```
+</ParamField>
+
+<ParamField body="onAnchorLost" type="(comment: SerializedComment) => void" optional>
+  Fired for each comment that `loadComments` or `notifyNavigation` could not
+  re-anchor to a DOM element. The comment is kept in the list and shown in the
+  inbox as orphaned rather than silently dropped.
+
+  ```js
+  onAnchorLost: (comment) =>
+    console.warn(`Comment ${comment.id} is orphaned on ${comment.page}`)
+  ```
+</ParamField>

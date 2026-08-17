@@ -1,0 +1,121 @@
+---
+title: "Persisting HellDots comments with localStorage or API"
+sidebarTitle: "Storage"
+description: "Choose between localStorage and callback persistence, understand the 5 MB quota and auto screenshot shedding, and reconcile a backend with clearComments."
+---
+
+HellDots gives you two persistence modes and a set of imperative methods for reading, writing, and reconciling comment state. Choosing the right mode up front avoids surprises later — especially around multi-tab behavior and storage limits.
+
+## The two persistence modes
+
+Set the `persistence` option when you create the overlay:
+
+| Mode | Value | Description |
+|---|---|---|
+| In-memory only | `"none"` (default) | Comments live only in JavaScript memory. Nothing is written to disk. Use callbacks to persist yourself. |
+| localStorage | `"localStorage"` | Comments are automatically saved to and restored from `localStorage` under a single key shared across all pages of your app. |
+
+```js
+// Default — in-memory, you own persistence
+createCommentOverlay({ user: { name: "Ana" } });
+
+// Built-in localStorage persistence
+createCommentOverlay({
+  user: { name: "Ana" },
+  persistence: "localStorage",
+});
+```
+
+## localStorage mode
+
+### What's stored and where
+
+All comments across every page of your app are written to a single `localStorage` key: `"helldots-comments"`. The inbox's "all pages" filter works because every page reads the same key. With `persistence: "localStorage"`, writes happen automatically on every mutation — you don't call `serializeComments()` yourself.
+
+### The ~5 MB browser cap
+
+Browsers typically cap `localStorage` at around 5 MB. A comment with an automatic JPEG screenshot adds roughly 33–100 KB; without screenshots, comments are a few KB each, meaning you can store hundreds before approaching the limit.
+
+When the quota is reached, HellDots sheds storage gracefully:
+
+1. The oldest automatic context screenshots (`contextScreenshot`) are dropped one at a time, starting with the oldest comment.
+2. The write is retried after each shed.
+3. **User-attached screenshots are never discarded.**
+4. If the quota is still exceeded after dropping all automatic screenshots, a warning is logged but the widget continues running.
+
+This means your comments always survive — only the automatic viewport captures might be lost on very heavy usage.
+
+### Multi-tab behavior
+
+<Note>
+  `persistence: "localStorage"` assumes one active tab per page. The behavior described below is a known limitation of browser-local storage — if you need reliable multi-tab editing, use the callback API and persist through your own backend instead.
+
+  - **Writes from another tab are preserved** on the next sync — a `storage` event from another tab invalidates the in-memory cache, so the next mutation re-reads from disk rather than overwriting the other tab's work.
+  - **Two tabs editing the same comment concurrently** resolve as last-write-wins — whichever tab saves last overwrites the other.
+  - **A comment deleted in one tab can reappear** if another tab still holds it in memory and saves afterwards.
+</Note>
+
+### When to use localStorage vs callbacks
+
+| Scenario | Recommendation |
+|---|---|
+| Prototyping or personal tooling | `persistence: "localStorage"` — zero backend required |
+| Internal team tools, single user | `persistence: "localStorage"` works well |
+| Multi-user apps | Callbacks + your own backend |
+| Cross-device access | Callbacks + your own backend |
+| Comments that must survive a cleared browser | Callbacks + your own backend |
+
+## `serializeComments()`
+
+Returns the current in-memory comment state as a `SerializedComment[]` array. Safe to call at any time — it's a read-only snapshot that doesn't trigger any writes or callbacks.
+
+```js
+const comments = overlay.serializeComments();
+// Plain JSON — safe to stringify and POST
+await fetch("/api/comments", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(comments),
+});
+```
+
+The returned objects match the `SerializedComment` TypeScript interface exactly. Pass them straight to your API or `JSON.stringify` them for any transport.
+
+## `loadComments(data)`
+
+Loads an array of `SerializedComment` objects into the widget. For each comment:
+
+- If the comment's `page` matches the current `location.pathname`, HellDots attempts to re-anchor it against the live DOM.
+- If the anchor element is found, the comment is **anchored** and a marker is placed.
+- If the anchor element can't be found, the comment is **orphaned** — visible in the inbox but without an on-page marker.
+- If the comment belongs to a different page, it's **inactive** — tracked in memory and visible in the inbox's "all pages" view, but no marker is placed.
+
+```js
+const result = overlay.loadComments(stored);
+// result: { anchored: number, orphaned: number, inactive: number }
+```
+
+`loadComments` replaces existing comments by `id` but **never removes** a comment that is in memory and absent from the incoming array. To do a full replace, use `clearComments()` first.
+
+## `clearComments()`
+
+Removes every comment at once — from memory, from the on-page markers, and (in `localStorage` mode) from the persisted store. It fires no per-comment callbacks, so your backend won't receive a flood of delete events.
+
+```js
+overlay.clearComments();
+```
+
+## Reconciling with a backend after remote deletions
+
+When comments can be deleted elsewhere (another user, a server-side job, an admin interface) and you want the widget to reflect that, use `clearComments()` then `loadComments()`:
+
+```js
+async function refresh(overlay) {
+  const { data: fresh } = await fetch("/api/comments").then((r) => r.json());
+
+  overlay.clearComments();         // wipe local state — no callbacks fired
+  overlay.loadComments(fresh);     // restore authoritative server state
+}
+```
+
+This is the recommended reconciliation pattern because `loadComments` alone can't remove — it can only add or update.

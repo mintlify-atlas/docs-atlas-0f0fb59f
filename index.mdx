@@ -1,20 +1,75 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "HellDots: Drop-in Comment Overlay for Web Apps"
+sidebarTitle: "Home"
+description: "HellDots lets your team click anywhere on a page to leave anchored comments with automatic screenshots and environment captures — no backend required to get started."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+HellDots is a drop-in JavaScript widget that adds a comment overlay to any web app. Your team clicks anywhere on a page to leave a comment anchored to that element — HellDots captures a screenshot, the browser environment, and a DOM fingerprint so comments survive page changes and re-anchor themselves automatically. You own the data entirely: route it to your own backend through callbacks, or use the built-in `localStorage` mode to get started immediately.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Add HellDots to your app and leave your first comment in under five minutes.
+  </Card>
+  <Card title="Backend Integration" icon="server" href="/guides/backend-integration">
+    Wire comments to your own API using callbacks and the serialization format.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/create-comment-overlay">
+    Full reference for `createCommentOverlay`, all options, and every method.
+  </Card>
+  <Card title="SPA Routing" icon="route" href="/guides/spa-routing">
+    Keep comments in sync across React Router, Vue Router, and other SPAs.
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## What HellDots does
+
+When someone leaves a comment, HellDots records more than the text. It captures a JPEG screenshot of the page as they saw it, an environment snapshot (URL, viewport size, browser, OS), and a structural anchor — a CSS selector plus a DOM fingerprint — that lets the comment re-attach to its element even after the page changes.
+
+<Steps>
+  <Step title="Install">
+    Add HellDots to your project with a single npm install — or load it from a CDN with no bundler required.
+    ```bash
+    npm install helldots
+    ```
+  </Step>
+  <Step title="Initialize">
+    Call `createCommentOverlay` once on the client. A toolbar appears at the bottom of the page.
+    ```js
+    import { createCommentOverlay } from "helldots";
+
+    createCommentOverlay({
+      user: { name: "Ana" },
+      persistence: "localStorage",
+    });
+    ```
+  </Step>
+  <Step title="Comment">
+    Press <kbd>Alt</kbd>+<kbd>C</kbd> (or <kbd>Option</kbd>+<kbd>C</kbd> on macOS) to enter comment mode, then click anywhere on the page. HellDots captures a screenshot and environment snapshot automatically.
+  </Step>
+  <Step title="Triage">
+    From the inbox sidebar, classify comments by type (bug, suggestion, question, improvement), set priority, add tags, and move them through the open → in progress → resolved lifecycle.
+  </Step>
+</Steps>
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Anchored comments" icon="anchor" href="/concepts/anchoring">
+    Comments survive DOM changes and re-attach themselves. Orphaned when their element disappears — never silently lost.
+  </Card>
+  <Card title="Automatic screenshots" icon="camera" href="/guides/screenshots">
+    Every comment gets a JPEG viewport capture. Drag to select a region for a full-resolution PNG crop.
+  </Card>
+  <Card title="Inbox & triage" icon="inbox" href="/concepts/triage">
+    Filter by page, status, type, priority, and tags. Resolved comments show time-to-resolution.
+  </Card>
+  <Card title="Agent-ready context" icon="robot" href="/concepts/agent-context">
+    Copy a structured context block built for pasting directly into an AI coding assistant.
+  </Card>
+  <Card title="SPA support" icon="arrows-rotate" href="/guides/spa-routing">
+    `notifyNavigation()` re-syncs anchors after every route change. Optional `autoDetectNavigation` covers back/forward automatically.
+  </Card>
+  <Card title="Shadow DOM isolation" icon="shield" href="/introduction">
+    Widget styles never leak into your page, and your page styles never leak into the widget.
+  </Card>
+</CardGroup>

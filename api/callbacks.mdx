@@ -1,0 +1,445 @@
+---
+title: "Callbacks and the onChange event stream in HellDots"
+sidebarTitle: "Callbacks"
+description: "How to subscribe to HellDots mutations via onChange or nine named callbacks, with TypeScript narrowing examples and backend sync patterns."
+---
+
+HellDots exposes every internal state change through two complementary subscription surfaces: the `onChange` unified event stream and nine specific named callbacks. Both surfaces fire for every mutation at exactly the same moment — you can subscribe to either, both, or neither depending on how your application is structured.
+
+A handler that throws is caught and logged with `console.warn`. It never rolls back the mutation that emitted the event, and it never prevents sibling handlers from running.
+
+---
+
+## onChange — the unified event stream
+
+`onChange` is the simplest way to sync HellDots with a backend when all mutations flow to a single endpoint. It receives a `ChangeEvent`, which is a discriminated union — switch on `event.type` and TypeScript automatically narrows the remaining fields.
+
+<ParamField body="onChange" type="(event: ChangeEvent) => void" optional>
+  Fires once per mutation, carrying a typed payload that describes exactly what
+  changed. Fires alongside any matching specific callback — subscribing to both
+  is safe and produces no duplicate side effects in HellDots itself; your own
+  handlers are the only ones that run twice.
+
+  ```ts
+  import { createCommentOverlay, ChangeEvent } from "helldots";
+
+  createCommentOverlay({
+    user: { name: "Ana" },
+    onChange(event: ChangeEvent) {
+      switch (event.type) {
+        case "comment:created":
+          // event.comment: SerializedComment
+          return api.post("/comments", event.comment);
+
+        case "comment:edited":
+          // event.comment: SerializedComment
+          return api.patch(`/comments/${event.comment.id}`, {
+            text: event.comment.text,
+            editedAt: event.comment.editedAt,
+          });
+
+        case "comment:deleted":
+          // event.id: CommentId
+          return api.delete(`/comments/${event.id}`);
+
+        case "comment:status-changed":
+          // event.comment: SerializedComment
+          return api.patch(`/comments/${event.comment.id}`, {
+            status: event.comment.status,
+            resolvedAt: event.comment.resolvedAt,
+          });
+
+        case "comment:updated":
+          // event.comment: SerializedComment
+          return api.patch(`/comments/${event.comment.id}`, {
+            type: event.comment.type,
+            priority: event.comment.priority,
+            tags: event.comment.tags,
+          });
+
+        case "comment:anchor-lost":
+          // event.comment: SerializedComment
+          console.warn("anchor lost", event.comment.id);
+          break;
+
+        case "reply:added":
+          // event.comment: SerializedComment, event.reply: CommentReply
+          return api.post(
+            `/comments/${event.comment.id}/replies`,
+            event.reply
+          );
+
+        case "reply:deleted":
+          // event.comment: SerializedComment, event.reply: CommentReply
+          return api.delete(
+            `/comments/${event.comment.id}/replies/${event.reply.id}`
+          );
+
+        case "reply:edited":
+          // event.comment: SerializedComment, event.reply: CommentReply
+          return api.patch(
+            `/comments/${event.comment.id}/replies/${event.reply.id}`,
+            { text: event.reply.text }
+          );
+      }
+    },
+  });
+  ```
+</ParamField>
+
+---
+
+## The ChangeEvent discriminated union
+
+`ChangeEvent` is defined in `index.d.ts` as a union of nine members. Each member has a `type` string literal that TypeScript uses as the discriminant. The full type definition is:
+
+```ts
+export type ChangeEvent =
+  | { type: "comment:created";        comment: SerializedComment }
+  | { type: "comment:edited";         comment: SerializedComment }
+  | { type: "comment:deleted";        id: CommentId }
+  | { type: "comment:status-changed"; comment: SerializedComment }
+  | { type: "comment:updated";        comment: SerializedComment }
+  | { type: "comment:anchor-lost";    comment: SerializedComment }
+  | { type: "reply:added";    comment: SerializedComment; reply: CommentReply }
+  | { type: "reply:deleted";  comment: SerializedComment; reply: CommentReply }
+  | { type: "reply:edited";   comment: SerializedComment; reply: CommentReply };
+```
+
+### Event reference
+
+<Accordion title="comment:created — new comment saved">
+  **Payload:** `{ comment: SerializedComment }`
+
+  Fires after a new comment is saved. The `comment` snapshot includes the
+  anchor, `context` environment data, any `contextScreenshot` captured at
+  creation, and an empty `replies` array.
+
+  ```ts
+  onChange(event) {
+    if (event.type === "comment:created") {
+      // event.comment is SerializedComment
+      await db.comments.create({ data: event.comment });
+    }
+  }
+  ```
+</Accordion>
+
+<Accordion title="comment:edited — comment text rewritten">
+  **Payload:** `{ comment: SerializedComment }`
+
+  Fires after `editComment` rewrites a comment's body text. The snapshot
+  includes the updated `text` and a fresh `editedAt` ISO-8601 timestamp.
+  No-ops (same text, blank text, or unknown id) do not emit this event.
+
+  ```ts
+  onChange(event) {
+    if (event.type === "comment:edited") {
+      await db.comments.update({
+        where: { id: String(event.comment.id) },
+        data: { text: event.comment.text, editedAt: event.comment.editedAt },
+      });
+    }
+  }
+  ```
+</Accordion>
+
+<Accordion title="comment:deleted — comment removed">
+  **Payload:** `{ id: CommentId }`
+
+  Fires after `deleteComment` removes a comment. Only the `id` is in the
+  payload — the comment object is no longer in memory. Compare ids with
+  `String(id)` if your backend stores them as strings.
+
+  ```ts
+  onChange(event) {
+    if (event.type === "comment:deleted") {
+      await db.comments.delete({ where: { id: String(event.id) } });
+    }
+  }
+  ```
+</Accordion>
+
+<Accordion title="comment:status-changed — lifecycle state moved">
+  **Payload:** `{ comment: SerializedComment }`
+
+  Fires after `setCommentStatus` moves a comment between `"open"`,
+  `"in_progress"`, and `"resolved"`. When the new status is `"resolved"`,
+  `comment.resolvedAt` is stamped with the current ISO timestamp; moving away
+  from `"resolved"` clears it to `null`.
+
+  ```ts
+  onChange(event) {
+    if (event.type === "comment:status-changed") {
+      await db.comments.update({
+        where: { id: String(event.comment.id) },
+        data: {
+          status: event.comment.status,
+          resolvedAt: event.comment.resolvedAt,
+        },
+      });
+    }
+  }
+  ```
+</Accordion>
+
+<Accordion title="comment:updated — type, priority, or tags changed">
+  **Payload:** `{ comment: SerializedComment }`
+
+  Fires after `setCommentType`, `setCommentPriority`, or `setCommentTags`
+  changes classification fields. The snapshot includes the current `type`,
+  `priority`, and `tags` values — check all three if you store them separately.
+
+  ```ts
+  onChange(event) {
+    if (event.type === "comment:updated") {
+      await db.comments.update({
+        where: { id: String(event.comment.id) },
+        data: {
+          type: event.comment.type,
+          priority: event.comment.priority,
+          tags: event.comment.tags,
+        },
+      });
+    }
+  }
+  ```
+</Accordion>
+
+<Accordion title="comment:anchor-lost — comment could not be re-anchored">
+  **Payload:** `{ comment: SerializedComment }`
+
+  Fires for each comment that `loadComments` or `notifyNavigation` could not
+  re-anchor to a live DOM element. The comment is kept in the list with
+  `anchorState: "orphaned"` — it is never silently dropped. This event fires
+  again on every subsequent `notifyNavigation` call as long as the anchor
+  remains unresolvable, because "the element is gone on this visit" is fresh
+  information each time.
+
+  ```ts
+  onChange(event) {
+    if (event.type === "comment:anchor-lost") {
+      logger.warn("orphaned comment", {
+        id: event.comment.id,
+        page: event.comment.page,
+        selector: event.comment.anchor?.selector,
+      });
+    }
+  }
+  ```
+</Accordion>
+
+<Accordion title="reply:added — reply added to a comment">
+  **Payload:** `{ comment: SerializedComment; reply: CommentReply }`
+
+  Fires after `addReply` appends a reply to any comment. Both the updated
+  parent comment (which now includes the new reply in its `replies` array)
+  and the new `CommentReply` object are provided.
+
+  ```ts
+  onChange(event) {
+    if (event.type === "reply:added") {
+      await db.replies.create({
+        data: {
+          ...event.reply,
+          commentId: String(event.comment.id),
+        },
+      });
+    }
+  }
+  ```
+</Accordion>
+
+<Accordion title="reply:deleted — reply removed">
+  **Payload:** `{ comment: SerializedComment; reply: CommentReply }`
+
+  Fires after `deleteReply` removes a reply. The parent comment (now without
+  the reply) and the deleted reply object are both provided. The parent comment
+  is unchanged in all other respects.
+
+  ```ts
+  onChange(event) {
+    if (event.type === "reply:deleted") {
+      await db.replies.delete({
+        where: { id: String(event.reply.id) },
+      });
+    }
+  }
+  ```
+</Accordion>
+
+<Accordion title="reply:edited — reply text rewritten">
+  **Payload:** `{ comment: SerializedComment; reply: CommentReply }`
+
+  Fires after `editReply` rewrites a reply's text. The snapshot includes the
+  updated `text` and a fresh `editedAt` ISO timestamp on the reply.
+
+  ```ts
+  onChange(event) {
+    if (event.type === "reply:edited") {
+      await db.replies.update({
+        where: { id: String(event.reply.id) },
+        data: { text: event.reply.text, editedAt: event.reply.editedAt },
+      });
+    }
+  }
+  ```
+</Accordion>
+
+---
+
+## Individual callbacks
+
+Each named callback carries exactly the same event as the corresponding `onChange` member, at exactly the same moment. They are useful when different events need to go to different places, or when you already have separate handler functions.
+
+<ParamField body="onCommentCreated" type="(comment: SerializedComment) => void" optional>
+  Fires after a new comment is saved. Corresponds to `event.type === "comment:created"`.
+
+  ```js
+  onCommentCreated: (comment) => api.post("/comments", comment)
+  ```
+</ParamField>
+
+<ParamField body="onCommentEdited" type="(comment: SerializedComment) => void" optional>
+  Fires after `editComment` rewrites a comment's text. Corresponds to `event.type === "comment:edited"`.
+
+  ```js
+  onCommentEdited: (comment) =>
+    api.patch(`/comments/${comment.id}`, { text: comment.text })
+  ```
+</ParamField>
+
+<ParamField body="onCommentDeleted" type="(id: CommentId) => void" optional>
+  Fires after `deleteComment` removes a comment. Corresponds to `event.type === "comment:deleted"`.
+
+  ```js
+  onCommentDeleted: (id) => api.delete(`/comments/${id}`)
+  ```
+</ParamField>
+
+<ParamField body="onCommentStatusChanged" type="(comment: SerializedComment) => void" optional>
+  Fires after `setCommentStatus` changes a comment's lifecycle state. Corresponds to `event.type === "comment:status-changed"`.
+
+  ```js
+  onCommentStatusChanged: (comment) =>
+    api.patch(`/comments/${comment.id}`, { status: comment.status })
+  ```
+</ParamField>
+
+<ParamField body="onCommentUpdated" type="(comment: SerializedComment) => void" optional>
+  Fires after type, priority, or tags change. Corresponds to `event.type === "comment:updated"`.
+
+  ```js
+  onCommentUpdated: (comment) => api.patch(`/comments/${comment.id}`, comment)
+  ```
+</ParamField>
+
+<ParamField body="onAnchorLost" type="(comment: SerializedComment) => void" optional>
+  Fires for each comment that could not be re-anchored by `loadComments` or
+  `notifyNavigation`. Corresponds to `event.type === "comment:anchor-lost"`.
+
+  ```js
+  onAnchorLost: (comment) =>
+    console.warn(`Comment ${comment.id} is orphaned on ${comment.page}`)
+  ```
+</ParamField>
+
+<ParamField body="onReplyAdded" type="(comment: SerializedComment, reply: CommentReply) => void" optional>
+  Fires after `addReply` appends a reply. Corresponds to `event.type === "reply:added"`.
+
+  ```js
+  onReplyAdded: (comment, reply) =>
+    api.post(`/comments/${comment.id}/replies`, reply)
+  ```
+</ParamField>
+
+<ParamField body="onReplyDeleted" type="(comment: SerializedComment, reply: CommentReply) => void" optional>
+  Fires after `deleteReply` removes a reply. Corresponds to `event.type === "reply:deleted"`.
+
+  ```js
+  onReplyDeleted: (comment, reply) =>
+    api.delete(`/comments/${comment.id}/replies/${reply.id}`)
+  ```
+</ParamField>
+
+<ParamField body="onReplyEdited" type="(comment: SerializedComment, reply: CommentReply) => void" optional>
+  Fires after `editReply` rewrites a reply. Corresponds to `event.type === "reply:edited"`.
+
+  ```js
+  onReplyEdited: (comment, reply) =>
+    api.patch(`/comments/${comment.id}/replies/${reply.id}`, {
+      text: reply.text,
+    })
+  ```
+</ParamField>
+
+---
+
+## Error handling
+
+Every handler — both `onChange` and the specific callbacks — is wrapped in an individual `try/catch`. A handler that throws is caught and reported with `console.warn`, then execution continues normally. The mutation that caused the event is **never rolled back**, and a sibling handler is **never prevented from running**.
+
+```js
+createCommentOverlay({
+  onCommentCreated(comment) {
+    throw new Error("DB is down"); // ← caught, warned, ignored
+  },
+  onChange(event) {
+    // ← still runs, even though onCommentCreated threw
+    logger.info(event.type, event);
+  },
+});
+```
+
+<Note>
+  HellDots does not retry failed callbacks and does not queue events for
+  redelivery. If your handler throws because of a transient network error,
+  your application is responsible for reconciling the missed event (for
+  example, by periodically calling `serializeComments()` and diffing against
+  your backend).
+</Note>
+
+---
+
+## onChange vs individual callbacks — when to use which
+
+| Scenario | Recommendation |
+|---|---|
+| All mutations go to one endpoint | Use `onChange` — one function, one `switch` |
+| Different mutations go to different services | Use individual callbacks — each function handles one concern |
+| You want to log every event centrally and also handle each type | Use both — they fire together, no deduplication needed |
+| You need to inspect the raw event shape at runtime | Use `onChange` — it always receives the typed `ChangeEvent` object |
+
+---
+
+## Full backend sync example
+
+Here is a complete TypeScript example that syncs every HellDots event to a backend, demonstrates TypeScript narrowing, and loads existing comments on startup.
+
+```ts
+import { createCommentOverlay, type ChangeEvent, type SerializedComment } from "helldots";
+
+async function syncEvent(event: ChangeEvent): Promise<void> {
+  // POST the entire event to a single endpoint — the backend fans it out.
+  await fetch("/api/helldots-events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(event),
+  });
+}
+
+const overlay = createCommentOverlay({
+  user: { name: currentUser.displayName },
+  onChange: (event) => {
+    syncEvent(event).catch((err) =>
+      console.error("HellDots sync failed", event.type, err)
+    );
+  },
+});
+
+// Restore comments from your backend on load.
+const stored: SerializedComment[] = await fetch("/api/comments").then((r) =>
+  r.json()
+);
+overlay.loadComments(stored);
+```

@@ -1,0 +1,144 @@
+---
+title: "Localizing the HellDots comment widget for your users"
+sidebarTitle: "Internationalization"
+description: "Use English or Spanish via locale, supply a partial strings object for any other language, and use per-key English fallback for any key you don't supply."
+---
+
+HellDots renders a small set of UI strings — toolbar labels, inbox headings, status names, confirmation messages, and timestamps. All of them are localized through the `locale` option, and none are hardcoded in the widget's output. Two locales ship today, and you can supply custom strings for any language by passing a partial or complete strings object.
+
+## The `locale` option
+
+Pass a BCP 47 language tag to `createCommentOverlay`. If you omit the option, HellDots reads `navigator.language` at initialization time and picks the closest supported locale:
+
+```js
+import { createCommentOverlay } from "helldots";
+
+// Explicit locale
+createCommentOverlay({
+  user: { name: "Ana" },
+  locale: "es",
+});
+
+// Auto-detect from navigator.language (default)
+createCommentOverlay({
+  user: { name: "Ana" },
+  // locale not set — detects from browser
+});
+```
+
+<Note>
+  `locale` is typed as `string`, not as a union of known codes. This means you can pass a runtime-detected locale code (from `navigator.language`, a user preference stored in your database, or a URL segment) without a type cast. An unknown code degrades gracefully to English — it never throws or renders broken UI.
+</Note>
+
+## Built-in locales
+
+| Code | Language | Status |
+|---|---|---|
+| `en` | English | Full, default fallback |
+| `es` | Spanish (Español) | Full |
+
+The locale detection reads the first two characters of `navigator.language`, lowercased. A browser set to `en-US`, `en-GB`, or any other `en-*` tag resolves to `en`. A browser set to `es-419` or `es-MX` resolves to `es`.
+
+## Graceful fallback for unknown codes
+
+If you pass a locale code that isn't `"en"` or `"es"`, HellDots falls back to English on a per-key basis. This means:
+
+- A completely unknown locale (`"fr"`, `"de"`, `"ja"`) renders all strings in English.
+- A partial custom strings object (see below) renders your provided strings for the keys you supply, and English for any keys you omit.
+- Nothing breaks — the widget never renders `undefined` or an empty label.
+
+## Custom locale strings
+
+Pass a `strings` object alongside `locale` to override individual keys or supply a full translation for a language that doesn't ship with HellDots. You only need to provide the keys you want to change — any key you omit falls back to English.
+
+```js
+createCommentOverlay({
+  user: { name: "Ana" },
+  locale: "fr",
+  strings: {
+    toolbarComment: "Commenter",
+    toolbarInbox: "Boîte de réception",
+    send: "Envoyer",
+    close: "Fermer",
+    statusOpen: "Ouvert",
+    statusInProgress: "En cours",
+    statusResolved: "Résolu",
+    // Any keys you omit fall back to English
+  },
+});
+```
+
+## The English locale structure
+
+The strings are organized into logical groups. Here's a representative sample of the keys from `src/locales/en.js`:
+
+```js
+// Toolbar
+toolbarComment: "Comment",
+toolbarInbox: "Inbox",
+
+// Comment box
+commentPlaceholder: "Type your comment...",
+attachImage: "Attach image",
+send: "Send",
+close: "Close",
+
+// Status lifecycle
+statusOpen: "Open",
+statusInProgress: "In progress",
+statusResolved: "Resolved",
+
+// Type and priority (triage)
+typeBug: "Bug",
+typeSuggestion: "Suggestion",
+typeQuestion: "Question",
+typeImprovement: "Improvement",
+priorityHigh: "High",
+priorityMedium: "Medium",
+priorityLow: "Low",
+
+// Inbox filters
+filterAll: "All pages",
+filterCurrentPage: "Current page",
+filterByStatus: "Status",
+filterByType: "Type",
+filterByPriority: "Priority",
+filterClear: "Clear",
+
+// Relative timestamps (use {n} as a placeholder)
+minutesAgoTemplate: "{n}m",
+hoursAgoTemplate: "{n}h",
+daysAgoTemplate: "{n}d",
+durationLessThanMinute: "<1m",
+resolvedInTemplate: "Resolved in {n}",
+
+// Confirmation dialogs
+confirmDeleteCommentTitle: "Delete this comment?",
+confirmDelete: "Delete",
+confirmCancel: "Cancel",
+
+// Editing
+editComment: "Edit",
+editSave: "Save",
+editCancel: "Cancel",
+editedMark: "edited",
+```
+
+The full list of keys is in [`src/locales/en.js`](https://github.com/xKeCo/helldots/blob/main/src/locales/en.js). Template strings that use `{n}` as a placeholder (timestamps, counts, keyboard shortcut hints) are substituted at render time — pass the template string as-is with `{n}` intact.
+
+## Key groups at a glance
+
+| Group | Example keys |
+|---|---|
+| Toolbar | `toolbarComment`, `toolbarInbox` |
+| Comment box | `commentPlaceholder`, `attachImage`, `send`, `close` |
+| Thread and replies | `replyPlaceholder`, `replyCountOne`, `replyCountTemplate`, `deleteReply` |
+| Triage | `typeBug`, `typeSuggestion`, `typeQuestion`, `typeImprovement`, `priorityHigh`, `priorityMedium`, `priorityLow` |
+| Status | `statusOpen`, `statusInProgress`, `statusResolved` |
+| Inbox | `inboxAriaLabel`, `inboxEmptyTitle`, `inboxEmptyAction`, `inboxNoMatches` |
+| Filters | `filterAll`, `filterCurrentPage`, `filterByStatus`, `filterByType`, `filterByPriority`, `filterClear` |
+| Editing | `editComment`, `editReply`, `editSave`, `editCancel`, `editedMark`, `editedAtPrefix` |
+| Confirmation dialogs | `confirmDeleteCommentTitle`, `confirmDelete`, `confirmCancel` |
+| Relative time | `minutesAgoTemplate`, `hoursAgoTemplate`, `daysAgoTemplate`, `durationLessThanMinute`, `resolvedInTemplate` |
+| Context section | `contextSection`, `contextUrl`, `contextViewport`, `contextBrowser`, `contextOs` |
+| Modifier keys | `modifierAlt`, `modifierCtrl`, `modifierShift` |

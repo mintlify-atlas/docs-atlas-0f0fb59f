@@ -1,0 +1,116 @@
+---
+title: "How the comment status lifecycle works in HellDots"
+sidebarTitle: "Comment Lifecycle"
+description: "HellDots comments move through open, in_progress, and resolved. Use setCommentStatus to drive transitions and onCommentStatusChanged to react."
+---
+
+Every comment in HellDots carries a `status` that describes where it sits in your team's workflow. The status is shown as a colored dot on the marker and in the inbox, and it controls whether the marker is visible on the page. You can change it from the picker in the thread popover or the inbox, or programmatically through the API.
+
+## The three statuses
+
+HellDots defines a fixed set of lifecycle states with a deliberate color ramp that reads as urgency and progress at a glance.
+
+| Status | Color | Hex | Behavior |
+|--------|-------|-----|----------|
+| `open` | Blue | `#2E90FA` | Default state. Marker is visible on the page. Comment appears at the top of the inbox list. |
+| `in_progress` | Orange | `#FF9F0A` | Someone is actively working on it. Marker remains visible. |
+| `resolved` | Green | `#30D158` | Work is done. **Marker is removed from the page.** Comment sinks to the bottom of the inbox list. `resolvedAt` timestamp is stamped. |
+
+```ts
+export type CommentStatus = "open" | "in_progress" | "resolved";
+```
+
+The color values come directly from `STATUS_COLORS` in the HellDots source and are used for the colored dot badge rendered on each inbox card and marker tooltip.
+
+## Moving through the lifecycle
+
+### Programmatic transitions
+
+Use `setCommentStatus` on the overlay instance to move a comment to any status. It returns `false` if the id is unknown or the value is not a valid `CommentStatus`, and makes no change in that case.
+
+```js
+const overlay = createCommentOverlay({ user: { name: "Ana" } });
+
+// Move a comment to in-progress
+overlay.setCommentStatus("abc123", "in_progress");
+
+// Resolve it — stamps resolvedAt and removes the marker
+overlay.setCommentStatus("abc123", "resolved");
+
+// Reopen — clears resolvedAt and restores the marker
+overlay.setCommentStatus("abc123", "open");
+```
+
+### Reacting to status changes
+
+The `onCommentStatusChanged` callback fires every time any comment moves between states. It receives the full updated `SerializedComment` so you can persist the change to your backend.
+
+```js
+createCommentOverlay({
+  user: { name: "Ana" },
+  onCommentStatusChanged: (comment) => {
+    api.patch(`/comments/${comment.id}`, {
+      status: comment.status,
+      resolvedAt: comment.resolvedAt,
+    });
+  },
+});
+```
+
+The same event is also available through the unified `onChange` stream:
+
+```js
+createCommentOverlay({
+  onChange: (event) => {
+    if (event.type === "comment:status-changed") {
+      console.log(event.comment.status); // "open" | "in_progress" | "resolved"
+    }
+  },
+});
+```
+
+## Resolution time
+
+When a comment is resolved, HellDots stamps `resolvedAt` with an ISO timestamp. The inbox card then shows how long the comment was open — a duration calculated from `createdAt` to `resolvedAt`.
+
+```ts
+interface SerializedComment {
+  createdAt: string;      // ISO timestamp — set when the comment was created
+  resolvedAt: string | null; // ISO timestamp — set on resolution, cleared on reopen
+  status: CommentStatus;
+  // …
+}
+```
+
+Reopening a resolved comment — by calling `setCommentStatus(id, "open")` or `setCommentStatus(id, "in_progress")` — clears `resolvedAt` and restores the on-page marker. The resolution time badge disappears from the inbox card.
+
+<Tip>
+  Resolution time is also included in the agent context block that the inbox "copy" button puts on the clipboard. An AI assistant receiving that block sees a line like `Resolution time: 2 days 4 hours`, giving it temporal context about how long the issue sat open.
+</Tip>
+
+## Resolved comments in the inbox
+
+Resolved comments are not hidden — they appear at the bottom of the inbox list, visually separated from open and in-progress ones. This keeps your history intact and lets you search, filter, or reference old discussions without losing context.
+
+The on-page marker is removed when a comment resolves. This is intentional: resolved issues no longer need to interrupt the page for people working on other things. If you filter the inbox to show only resolved comments, you will not see any markers on the page.
+
+<Note>
+  Filtering the inbox by status is non-destructive. Switching the filter to `open` or `in_progress` simply hides resolved cards from view — the comments remain in memory and in your backend. Call `serializeComments()` at any time to get the full set including resolved items.
+</Note>
+
+## Full lifecycle example
+
+<Steps>
+  <Step title="Comment is created">
+    Status is `open`. Marker appears on the page. `onCommentCreated` fires.
+  </Step>
+  <Step title="Someone picks it up">
+    `setCommentStatus(id, "in_progress")` — marker stays visible, dot turns orange. `onCommentStatusChanged` fires.
+  </Step>
+  <Step title="Work is done">
+    `setCommentStatus(id, "resolved")` — marker is removed, card sinks to the bottom, `resolvedAt` is stamped, duration appears. `onCommentStatusChanged` fires.
+  </Step>
+  <Step title="Reopening (optional)">
+    `setCommentStatus(id, "open")` — `resolvedAt` is cleared, marker is restored, card rises back into the active list. `onCommentStatusChanged` fires.
+  </Step>
+</Steps>

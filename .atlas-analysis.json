@@ -1,0 +1,116 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "HellDots",
+  "projectDescription": "A drop-in JavaScript comment overlay widget that lets teams click anywhere on a web page to leave anchored comments — complete with automatic screenshots, environment captures, threading, triage, and a built-in inbox.",
+  "theme": "luma",
+  "primaryColor": "#2E90FA",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/backend-integration",
+              "guides/spa-routing",
+              "guides/ssr-frameworks",
+              "guides/screenshots",
+              "guides/storage",
+              "guides/i18n"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/anchoring",
+              "concepts/comment-lifecycle",
+              "concepts/triage",
+              "concepts/agent-context"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Factory & Class",
+            "pages": [
+              "api/create-comment-overlay",
+              "api/comment-overlay-class"
+            ]
+          },
+          {
+            "group": "Options & Types",
+            "pages": [
+              "api/options",
+              "api/callbacks",
+              "api/types"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Click-anywhere comment anchoring with CSS selector + DOM fingerprint persistence",
+    "Automatic viewport screenshots (JPEG) and environment capture (URL, viewport, browser, OS) per comment",
+    "Drag-to-select region screenshots attached to comments",
+    "Threaded replies with edit, delete, and screenshot attachments",
+    "Inbox sidebar with filtering by page, status, type, priority, and tags",
+    "Comment triage: type (bug/suggestion/question/improvement), priority (high/medium/low), and free-form tags",
+    "Comment lifecycle status: open → in progress → resolved, with resolution time tracking",
+    "SPA support via notifyNavigation() and optional autoDetectNavigation",
+    "localStorage persistence mode or custom backend callbacks",
+    "Agent-ready context block (copy to clipboard for AI coding assistants)",
+    "Shadow DOM isolation — widget styles never leak into or from the host page",
+    "ESM-only with UMD CDN build, TypeScript definitions included",
+    "English and Spanish locales; per-key fallback for partial custom locales",
+    "Shareable comment deep links via configurable query parameter"
+  ],
+  "publicApiSurface": [
+    "createCommentOverlay(options)",
+    "CommentOverlay (class)",
+    "overlay.comments",
+    "overlay.commentMode",
+    "overlay.toggleCommentMode()",
+    "overlay.addReply(commentOrId, text, screenshots?)",
+    "overlay.deleteReply(commentId, replyId)",
+    "overlay.editComment(id, text)",
+    "overlay.editReply(commentId, replyId, text)",
+    "overlay.commentLink(id)",
+    "overlay.serializeComments()",
+    "overlay.loadComments(data)",
+    "overlay.notifyNavigation()",
+    "overlay.clearComments()",
+    "overlay.deleteComment(id)",
+    "overlay.setCommentStatus(id, status)",
+    "overlay.setCommentType(id, type)",
+    "overlay.setCommentPriority(id, priority)",
+    "overlay.setCommentTags(id, tags)",
+    "overlay.cleanup()",
+    "CommentOverlayOptions (interface)",
+    "SerializedComment (interface)",
+    "CommentReply (interface)",
+    "Comment (interface)",
+    "CommentAnchor (interface)",
+    "CommentContext (interface)",
+    "ChangeEvent (discriminated union type)",
+    "CommentStatus ('open' | 'in_progress' | 'resolved')",
+    "CommentType ('bug' | 'suggestion' | 'question' | 'improvement')",
+    "CommentPriority ('high' | 'medium' | 'low')",
+    "CommentId (string | number)",
+    "AnchorState ('anchored' | 'orphaned' | 'inactive')"
+  ]
+}

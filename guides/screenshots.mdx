@@ -1,0 +1,100 @@
+---
+title: "HellDots screenshot capture and environment context"
+sidebarTitle: "Screenshots"
+description: "Auto JPEG captures, drag crops, cross-origin font misalignment, the embedCrossOriginFonts option, CSP handling, and screenshot fields on comment objects."
+---
+
+Every new comment in HellDots automatically captures two kinds of context: a screenshot of the page as the reporter saw it, and an environment snapshot recording the URL, browser, OS, viewport dimensions, and screen resolution. Together they give bug reporters enough information to file a complete report without anyone having to ask a follow-up question.
+
+## What gets captured automatically
+
+When someone saves a comment, HellDots renders the current page off-screen and captures:
+
+- **A JPEG viewport screenshot** at half scale — typically 30–100 KB. The widget's own toolbar and UI are excluded from the render, so the image shows exactly what the user saw, not an overlay with a floating toolbar in the corner.
+- **An environment snapshot** stored in `SerializedComment.context`: the full `location.href`, viewport dimensions (`innerWidth`/`innerHeight`), screen resolution (`screen.width`/`screen.height`), device pixel ratio, raw user agent string, parsed browser name and version, OS name and version, and browser language.
+
+The capture starts as soon as the comment box opens (in the background, so it never blocks the UI), and the result is attached when the comment is saved.
+
+## Drag-to-select region captures
+
+In comment mode, dragging instead of clicking draws a selection rectangle. When the gesture ends, HellDots renders the page at full scale and crops the exact selected region into a **full-resolution PNG**. This PNG is attached to the comment as the first entry in `SerializedComment.screenshots[]`.
+
+The automatic JPEG context capture still happens in parallel — a drag-selected comment ends up with both `contextScreenshot` (the half-scale JPEG of the whole viewport) and a full-resolution PNG crop in `screenshots[]`.
+
+## Opting out with `autoScreenshot: false`
+
+The render costs a moment on every comment, particularly on heavy pages. Set `autoScreenshot: false` to skip the automatic capture entirely:
+
+```js
+createCommentOverlay({
+  user: { name: "Ana" },
+  autoScreenshot: false,
+});
+```
+
+With this option, `SerializedComment.contextScreenshot` is always `null`. Users can still attach screenshots manually (up to 5 per comment or reply). Drag-to-select region crops are also disabled since there is nothing to render.
+
+## Cross-origin fonts and screenshot alignment
+
+<Warning>
+  Pages that load fonts through a cross-origin `<link>` — Google Fonts, Adobe Fonts, or any other hosted font service — will have **misaligned text** in screenshots unless you take one of the actions below.
+
+  A screenshot in HellDots is a DOM re-render, not a screen grab. Reading `cssRules` on a cross-origin stylesheet throws a `SecurityError`, so the `@font-face` declarations never reach the renderer. The text falls back to a different typeface with different metrics, shifting every glyph sideways. A drag selection tight around a few letters can come back holding the wrong ones.
+</Warning>
+
+### Three ways to fix it
+
+<Steps>
+  <Step title="Self-host the font, or add crossorigin to the link (recommended)">
+    The cheapest fix at capture time. When a stylesheet is same-origin — or loaded with the CORS `crossorigin` attribute — its `cssRules` are readable and the font reaches the renderer with no extra network requests.
+
+    ```html
+    <!-- Add crossorigin to your existing Google Fonts link -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap"
+      crossorigin
+    />
+    ```
+
+    Self-hosting (downloading the font files and serving them from your own domain) achieves the same result permanently, with no reliance on a third-party CDN.
+  </Step>
+  <Step title="Enable embedCrossOriginFonts">
+    Set `embedCrossOriginFonts: true` to have HellDots re-fetch those stylesheets at capture time. The URLs are the same ones the browser already loaded and cached, so no extra bandwidth is consumed per comment — the fetch is a cache hit. Results are cached per session.
+
+    ```js
+    createCommentOverlay({
+      user: { name: "Ana" },
+      embedCrossOriginFonts: true,
+    });
+    ```
+
+    This is opt-in by design: a comment widget making third-party requests on your users' behalf should be your explicit decision, not a default.
+  </Step>
+  <Step title="Leave it">
+    Captures of such a page remain misaligned where text is concerned. Everything else in the screenshot — layout, colors, images, spacing — is correct. If font accuracy is not critical for your use case, this is a reasonable choice.
+  </Step>
+</Steps>
+
+## Content Security Policy
+
+If your page enforces a strict `style-src` Content Security Policy, HellDots handles it gracefully since 0.5.0. The screenshot renderer embeds web fonts through a `<style>` in a detached document that inherits the page's CSP. Where the policy blocks that injection, the widget detects it up front and renders without font embedding — the screenshot is still taken, only downloaded fonts are absent from the image. Pages without a strict CSP are unaffected.
+
+The widget's own styles are delivered as constructed stylesheets (`adoptedStyleSheets`), which CSP does not block, with a fallback to an injected `<style>` where the platform doesn't support them.
+
+## Screenshots in the serialized comment shape
+
+A `SerializedComment` carries screenshots in two separate fields:
+
+| Field | Format | Set by | Max |
+|---|---|---|---|
+| `contextScreenshot` | JPEG data-URL (base64) | Automatic capture at comment creation | 1 per comment |
+| `screenshots` | PNG data-URL array | User-attached via the attach button or drag-to-select | 5 per comment or reply |
+
+`CommentReply` also has a `screenshots` field — replies support the same manual attachment flow, also capped at 5.
+
+When you serialize comments for your backend, both fields are plain strings (data-URLs). They can be stored as-is or decoded and stored as binary blobs — `loadComments` accepts them back in either form as long as they're valid data-URLs when the widget renders them.
+
+<Tip>
+  `contextScreenshot` can be `null` on comments created with `autoScreenshot: false`, on very old comments, or after localStorage quota shedding drops it to make room. Always guard against `null` when rendering screenshots in your own UI.
+</Tip>

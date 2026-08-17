@@ -1,0 +1,512 @@
+---
+title: "TypeScript types and interfaces reference for HellDots"
+sidebarTitle: "Types"
+description: "Every TypeScript type and interface exported by the helldots package: primitive unions, Comment, SerializedComment, CommentAnchor, and ChangeEvent."
+---
+
+HellDots ships a complete `index.d.ts` alongside the package — no `@types` install is needed. This page documents every exported type and interface. All definitions below are extracted verbatim from the source declarations.
+
+---
+
+## Primitive types
+
+These union types constrain the values that appear on comment and reply objects. Each is exported so you can annotate your own code without re-declaring the set of valid values.
+
+<ResponseField name="CommentId" type="string | number">
+  The identifier of a comment or reply.
+
+  ```ts
+  export type CommentId = string | number;
+  ```
+
+  New IDs are 21-character [nanoid](https://github.com/ai/nanoid) strings. The `number` arm is not legacy cruft: comments created before the nanoid migration are still sitting in hosts' `localStorage` and in their own backends, and they keep resolving.
+
+  <Note>
+    Always compare IDs with `String(a) === String(b)` rather than `===` when
+    either side may have crossed a JSON or URL boundary. A numeric ID
+    serialized to JSON and parsed back becomes a `number`; the same ID in a
+    URL query string becomes a `string`. The strict equality check
+    `42 === "42"` returns `false` and causes phantom "not found" errors.
+  </Note>
+</ResponseField>
+
+<ResponseField name="AnchorState" type='"anchored" | "orphaned" | "inactive"'>
+  The re-anchor status of a comment's DOM binding on the current page.
+
+  ```ts
+  export type AnchorState = "anchored" | "orphaned" | "inactive";
+  ```
+
+  | Value | Meaning |
+  |---|---|
+  | `"anchored"` | The anchor element was found in the current DOM |
+  | `"orphaned"` | The anchor element could not be found on this page visit |
+  | `"inactive"` | The comment belongs to a different `location.pathname` |
+</ResponseField>
+
+<ResponseField name="CommentStatus" type='"open" | "in_progress" | "resolved"'>
+  The lifecycle state of a comment.
+
+  ```ts
+  export type CommentStatus = "open" | "in_progress" | "resolved";
+  ```
+
+  | Value | UI colour | Meaning |
+  |---|---|---|
+  | `"open"` | Blue `#2E90FA` | Newly created; no work started |
+  | `"in_progress"` | Orange `#FF9F0A` | Acknowledged; being worked on |
+  | `"resolved"` | Green `#30D158` | Done; `resolvedAt` is stamped |
+
+  Change status programmatically with `overlay.setCommentStatus(id, status)`.
+</ResponseField>
+
+<ResponseField name="CommentType" type='"bug" | "suggestion" | "question" | "improvement"'>
+  The category of a comment. A `null` value means deliberately unclassified.
+
+  ```ts
+  export type CommentType = "bug" | "suggestion" | "question" | "improvement";
+  ```
+
+  | Value | UI colour |
+  |---|---|
+  | `"bug"` | Red `#FF453A` |
+  | `"suggestion"` | Purple `#BF5AF2` |
+  | `"question"` | Sky blue `#64D2FF` |
+  | `"improvement"` | Indigo `#5E5CE6` |
+
+  Change type with `overlay.setCommentType(id, type)`. Pass `null` to return to the neutral state.
+</ResponseField>
+
+<ResponseField name="CommentPriority" type='"high" | "medium" | "low"'>
+  The urgency level of a comment. A `null` value means deliberately unprioritised.
+
+  ```ts
+  export type CommentPriority = "high" | "medium" | "low";
+  ```
+
+  | Value | UI colour |
+  |---|---|
+  | `"high"` | Red `#FF453A` |
+  | `"medium"` | Orange `#FF9F0A` |
+  | `"low"` | Grey `#8E8E93` |
+
+  Change priority with `overlay.setCommentPriority(id, priority)`. Pass `null` to return to the neutral state.
+</ResponseField>
+
+---
+
+## Interfaces
+
+### CommentAnchorFingerprint
+
+A structural fingerprint of the element that was clicked when a comment was created. Used by the anchor resolver to find the element again after the DOM changes.
+
+```ts
+export interface CommentAnchorFingerprint {
+  tagName: string;
+  /** First ~64 chars of the element's normalized textContent. */
+  textSnippet: string;
+  /** Stable attributes only (id, name, role, aria-label, non-framework data-*). */
+  attributes: Record<string, string>;
+  /** 0-based position among same-tag siblings at creation time. */
+  siblingIndex: number;
+  siblingCount: number;
+}
+```
+
+<Expandable title="Field descriptions">
+  <ResponseField name="tagName" type="string">
+    The element's tag name, e.g. `"BUTTON"` or `"DIV"`.
+  </ResponseField>
+  <ResponseField name="textSnippet" type="string">
+    The first ~64 characters of the element's normalized `textContent`. Used
+    as a fuzzy signal when the selector no longer uniquely resolves.
+  </ResponseField>
+  <ResponseField name="attributes" type="Record<string, string>">
+    A snapshot of stable, framework-agnostic attributes: `id`, `name`,
+    `role`, `aria-label`, and `data-*` attributes whose names don't look
+    like framework-generated hashes. Volatile attributes like `class` and
+    `style` are excluded.
+  </ResponseField>
+  <ResponseField name="siblingIndex" type="number">
+    The 0-based index of this element among its same-tag siblings at
+    creation time.
+  </ResponseField>
+  <ResponseField name="siblingCount" type="number">
+    The total number of same-tag siblings at creation time.
+  </ResponseField>
+</Expandable>
+
+---
+
+### CommentAnchor
+
+The complete anchor record for a comment — everything needed to re-locate the target element on any future page load.
+
+```ts
+export interface CommentAnchor {
+  version: 1;
+  /** Best-effort unique CSS selector, or null when none could be generated. */
+  selector: string | null;
+  /** Selector for the exact clicked element when deeper than the container. */
+  targetSelector?: string | null;
+  fingerprint: CommentAnchorFingerprint;
+  /** Fraction (0–1) of the anchor element's box, captured at creation. */
+  relativeX: number;
+  relativeY: number;
+}
+```
+
+<Expandable title="Field descriptions">
+  <ResponseField name="version" type="1">
+    Schema version. Always `1` in current builds; reserved for future
+    migration detection.
+  </ResponseField>
+  <ResponseField name="selector" type="string | null">
+    A best-effort unique CSS selector for the container element. `null` when
+    the anchor engine could not produce one (e.g. no stable attributes and
+    no meaningful path).
+  </ResponseField>
+  <ResponseField name="targetSelector" type="string | null" optional>
+    The selector for the exact element the user clicked, when it is a
+    descendant of the container. `null` or absent when the click landed
+    directly on the container.
+  </ResponseField>
+  <ResponseField name="fingerprint" type="CommentAnchorFingerprint">
+    Structural fingerprint of the container element. See
+    `CommentAnchorFingerprint` above.
+  </ResponseField>
+  <ResponseField name="relativeX" type="number">
+    The horizontal click position as a fraction (0–1) of the anchor
+    element's bounding box width, measured at creation time.
+  </ResponseField>
+  <ResponseField name="relativeY" type="number">
+    The vertical click position as a fraction (0–1) of the anchor element's
+    bounding box height, measured at creation time.
+  </ResponseField>
+</Expandable>
+
+---
+
+### CommentContext
+
+An environment snapshot taken automatically when a new comment is saved (when `autoScreenshot` is `true`). Gives reviewers the exact context in which the comment was created — browser, OS, viewport, and URL — without anyone having to ask.
+
+```ts
+export interface CommentContext {
+  version: 1;
+  /** Full location.href at creation time. */
+  url: string;
+  viewport: { width: number; height: number };
+  /** Screen resolution (screen.width/height). */
+  screen: { width: number; height: number };
+  devicePixelRatio: number;
+  /** Raw UA — always stored, even when browser/os parsing fails. */
+  userAgent: string;
+  browser: { name: string; version: string };
+  os: { name: string; version: string };
+  language: string;
+}
+```
+
+<Expandable title="Field descriptions">
+  <ResponseField name="version" type="1">
+    Schema version. Always `1`.
+  </ResponseField>
+  <ResponseField name="url" type="string">
+    The full `location.href` at the moment the comment was created.
+  </ResponseField>
+  <ResponseField name="viewport" type="{ width: number; height: number }">
+    The browser viewport dimensions (`window.innerWidth` / `window.innerHeight`).
+  </ResponseField>
+  <ResponseField name="screen" type="{ width: number; height: number }">
+    The physical screen resolution (`screen.width` / `screen.height`).
+  </ResponseField>
+  <ResponseField name="devicePixelRatio" type="number">
+    The device pixel ratio (`window.devicePixelRatio`). Useful for
+    distinguishing HiDPI/Retina displays.
+  </ResponseField>
+  <ResponseField name="userAgent" type="string">
+    The raw `navigator.userAgent` string. Always stored, even when the
+    browser/OS parser above it fails.
+  </ResponseField>
+  <ResponseField name="browser" type="{ name: string; version: string }">
+    Parsed browser name and version (e.g. `{ name: "Safari", version: "17.2" }`).
+  </ResponseField>
+  <ResponseField name="os" type="{ name: string; version: string }">
+    Parsed OS name and version (e.g. `{ name: "iOS", version: "17.2" }`).
+  </ResponseField>
+  <ResponseField name="language" type="string">
+    The `navigator.language` value at creation time.
+  </ResponseField>
+</Expandable>
+
+---
+
+### CommentReply
+
+A single reply in a comment thread.
+
+```ts
+export interface CommentReply {
+  id: CommentId;
+  text: string;
+  author: string;
+  timestamp: string;
+  screenshots?: string[];
+  /** ISO timestamp of the last edit; null when never edited. */
+  editedAt?: string | null;
+}
+```
+
+<Expandable title="Field descriptions">
+  <ResponseField name="id" type="CommentId">
+    Unique identifier. See `CommentId` for comparison notes.
+  </ResponseField>
+  <ResponseField name="text" type="string">
+    The reply body text.
+  </ResponseField>
+  <ResponseField name="author" type="string">
+    The author name at the time the reply was created.
+  </ResponseField>
+  <ResponseField name="timestamp" type="string">
+    ISO-8601 creation timestamp.
+  </ResponseField>
+  <ResponseField name="screenshots" type="string[]" optional>
+    Data-URL strings for any screenshots the user attached to this reply.
+    Absent or empty when no screenshots were attached.
+  </ResponseField>
+  <ResponseField name="editedAt" type="string | null" optional>
+    ISO-8601 timestamp of the last edit, or `null` when the reply has never
+    been edited. Absent on replies created before the field was introduced.
+  </ResponseField>
+</Expandable>
+
+---
+
+### Comment
+
+The live, in-memory representation of a comment. This is what `overlay.comments` contains. It includes runtime-only fields (like the live `container` DOM element) that are not present in the serialized form. When passing comment data to your own backend or to `loadComments`, use `SerializedComment` instead.
+
+```ts
+export interface Comment {
+  id: CommentId;
+  text: string;
+  editedAt?: string | null;
+  /** Live anchor element; null while the comment is orphaned or inactive. */
+  container: HTMLElement | null;
+  relativeX: number;
+  relativeY: number;
+  anchor: CommentAnchor | null;
+  anchorState: AnchorState;
+  /** Runtime-only: anchor element currently has zero size (not serialized). */
+  hidden: boolean;
+  /** Runtime-only: exact element the user clicked on (not serialized). */
+  target?: HTMLElement | null;
+  page: string;
+  replies: CommentReply[];
+  author: string;
+  createdAt: string;
+  screenshots: string[];
+  status: CommentStatus;
+  type: CommentType | null;
+  priority: CommentPriority | null;
+  tags: string[];
+  resolvedAt: string | null;
+  context: CommentContext | null;
+  contextScreenshot: string | null;
+  reactions?: Record<string, string[]>;
+}
+```
+
+<Expandable title="Field descriptions">
+  <ResponseField name="id" type="CommentId">
+    Unique identifier. See `CommentId` for comparison notes.
+  </ResponseField>
+  <ResponseField name="text" type="string">
+    The comment body text.
+  </ResponseField>
+  <ResponseField name="editedAt" type="string | null" optional>
+    ISO-8601 timestamp of the last text edit, or `null`.
+  </ResponseField>
+  <ResponseField name="container" type="HTMLElement | null">
+    The live DOM element the comment is anchored to. `null` when
+    `anchorState` is `"orphaned"` or `"inactive"`.
+  </ResponseField>
+  <ResponseField name="relativeX" type="number">
+    Horizontal position as a fraction of the container's width.
+  </ResponseField>
+  <ResponseField name="relativeY" type="number">
+    Vertical position as a fraction of the container's height.
+  </ResponseField>
+  <ResponseField name="anchor" type="CommentAnchor | null">
+    The serializable anchor record used to re-locate the container element
+    after a page reload.
+  </ResponseField>
+  <ResponseField name="anchorState" type="AnchorState">
+    The current re-anchor status: `"anchored"`, `"orphaned"`, or `"inactive"`.
+  </ResponseField>
+  <ResponseField name="hidden" type="boolean">
+    Runtime-only. `true` when the anchor element currently has zero size
+    (e.g. inside a collapsed accordion). The marker is hidden but the
+    comment is not deleted. Not serialized.
+  </ResponseField>
+  <ResponseField name="target" type="HTMLElement | null" optional>
+    Runtime-only. The exact element the user clicked on, which may be a
+    descendant of `container`. Not serialized.
+  </ResponseField>
+  <ResponseField name="page" type="string">
+    The `location.pathname` where the comment was created.
+  </ResponseField>
+  <ResponseField name="replies" type="CommentReply[]">
+    The list of replies in the thread, in insertion order.
+  </ResponseField>
+  <ResponseField name="author" type="string">
+    The display name of the comment's author.
+  </ResponseField>
+  <ResponseField name="createdAt" type="string">
+    ISO-8601 creation timestamp.
+  </ResponseField>
+  <ResponseField name="screenshots" type="string[]">
+    Data-URL strings for screenshots attached to the comment (not the
+    automatic `contextScreenshot`).
+  </ResponseField>
+  <ResponseField name="status" type="CommentStatus">
+    The current lifecycle state.
+  </ResponseField>
+  <ResponseField name="type" type="CommentType | null">
+    The comment category, or `null` when unclassified.
+  </ResponseField>
+  <ResponseField name="priority" type="CommentPriority | null">
+    The urgency level, or `null` when unprioritised.
+  </ResponseField>
+  <ResponseField name="tags" type="string[]">
+    Free-form labels. Values are trimmed, lowercased, and de-duplicated by
+    `setCommentTags`.
+  </ResponseField>
+  <ResponseField name="resolvedAt" type="string | null">
+    ISO-8601 timestamp set when status becomes `"resolved"`, cleared to
+    `null` when re-opened.
+  </ResponseField>
+  <ResponseField name="context" type="CommentContext | null">
+    Environment snapshot taken at creation. `null` when `autoScreenshot`
+    was `false`.
+  </ResponseField>
+  <ResponseField name="contextScreenshot" type="string | null">
+    Automatic JPEG viewport screenshot as a data-URL. `null` when
+    `autoScreenshot` was `false` or the capture failed.
+  </ResponseField>
+  <ResponseField name="reactions" type="Record<string, string[]>" optional>
+    Reserved for future emoji reaction support. Not yet implemented.
+  </ResponseField>
+</Expandable>
+
+---
+
+### SerializedComment
+
+The over-the-wire and at-rest representation of a comment. This is what `serializeComments()` returns, what `loadComments()` accepts, and what callback/`onChange` payloads carry. It is structurally identical to `Comment` but replaces runtime-only fields with their serializable equivalents.
+
+```ts
+export interface SerializedComment {
+  schemaVersion?: number;
+  id: CommentId;
+  text: string;
+  editedAt?: string | null;
+  anchor: CommentAnchor | null;
+  page: string;
+  replies: CommentReply[];
+  author: string;
+  createdAt: string;
+  screenshots: string[];
+  status: CommentStatus;
+  type: CommentType | null;
+  priority: CommentPriority | null;
+  tags: string[];
+  resolvedAt: string | null;
+  context: CommentContext | null;
+  contextScreenshot: string | null;
+  reactions?: Record<string, string[]>;
+}
+```
+
+<Expandable title="Differences from Comment">
+  <ResponseField name="schemaVersion" type="number" optional>
+    The version of this serialized shape. Stamped as `1` by
+    `serializeComments()`. Optional because payloads persisted before this
+    field was introduced have none — `loadComments` handles both.
+  </ResponseField>
+  <ResponseField name="anchor" type="CommentAnchor | null">
+    The serializable anchor record. Replaces the runtime `container`
+    (`HTMLElement`) and `anchorState` fields, which are not present on
+    `SerializedComment`.
+  </ResponseField>
+
+  The following `Comment` fields are **absent** from `SerializedComment`:
+  - `container` — live DOM element; not serializable
+  - `anchorState` — derived at load time from `anchor` resolution
+  - `hidden` — runtime flag
+  - `target` — runtime reference to the clicked element
+  - `relativeX` / `relativeY` at the top level (they live inside `anchor`)
+</Expandable>
+
+<Note>
+  Pass `SerializedComment[]` output from `serializeComments()` straight to
+  your API and hand it back to `loadComments()` later — the shape is
+  JSON-safe and round-trips cleanly.
+</Note>
+
+---
+
+### ChangeEvent
+
+The discriminated union of all nine mutations the widget can emit. Switch on `type` and TypeScript narrows the payload fields automatically.
+
+```ts
+export type ChangeEvent =
+  | { type: "comment:created";        comment: SerializedComment }
+  | { type: "comment:edited";         comment: SerializedComment }
+  | { type: "comment:deleted";        id: CommentId }
+  | { type: "comment:status-changed"; comment: SerializedComment }
+  | { type: "comment:updated";        comment: SerializedComment }
+  | { type: "comment:anchor-lost";    comment: SerializedComment }
+  | { type: "reply:added";    comment: SerializedComment; reply: CommentReply }
+  | { type: "reply:deleted";  comment: SerializedComment; reply: CommentReply }
+  | { type: "reply:edited";   comment: SerializedComment; reply: CommentReply };
+```
+
+See the [Callbacks reference](/api/callbacks) for a full description of each event type, including when it fires and what its payload contains.
+
+---
+
+### CommentOverlayOptions
+
+The configuration object accepted by `createCommentOverlay`. All fields are optional.
+
+```ts
+export interface CommentOverlayOptions {
+  user?: { name: string };
+  persistence?: "localStorage" | "none";
+  autoScreenshot?: boolean;
+  embedCrossOriginFonts?: boolean;
+  locale?: string;
+  linkParam?: string;
+  navigate?: (page: string) => void;
+  autoDetectNavigation?: boolean;
+  shortcutKey?: string;
+  shortcutModifier?: "alt" | "ctrl" | "shift";
+  autoInit?: boolean;
+  onChange?: (event: ChangeEvent) => void;
+  onCommentCreated?: (comment: SerializedComment) => void;
+  onReplyAdded?: (comment: SerializedComment, reply: CommentReply) => void;
+  onReplyDeleted?: (comment: SerializedComment, reply: CommentReply) => void;
+  onCommentEdited?: (comment: SerializedComment) => void;
+  onReplyEdited?: (comment: SerializedComment, reply: CommentReply) => void;
+  onAnchorLost?: (comment: SerializedComment) => void;
+  onCommentDeleted?: (id: CommentId) => void;
+  onCommentStatusChanged?: (comment: SerializedComment) => void;
+  onCommentUpdated?: (comment: SerializedComment) => void;
+}
+```
+
+See the [Options reference](/api/options) for a full description of every field including default values and examples.

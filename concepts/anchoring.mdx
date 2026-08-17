@@ -1,0 +1,115 @@
+---
+title: "How HellDots anchors comments to DOM page elements"
+sidebarTitle: "Anchoring"
+description: "Pins each comment to a DOM element via CSS selector and fingerprint, re-anchors after page changes, and marks it orphaned when the element is removed."
+---
+
+Every HellDots comment is attached to a specific element on the page — not just a pixel coordinate. When the page reloads or the app re-renders, HellDots re-locates that element and repositions the marker automatically. If the element can no longer be found, the comment is marked as orphaned rather than silently dropped, and the `onAnchorLost` callback fires so your backend can react.
+
+## What an anchor is
+
+At creation time, HellDots captures a `CommentAnchor` object and stores it on the comment. This object contains everything needed to find the element again later.
+
+```ts
+export interface CommentAnchor {
+  version: 1;
+  /** Best-effort unique CSS selector, or null when none could be generated. */
+  selector: string | null;
+  /** Selector for the exact clicked element when deeper than the container. */
+  targetSelector?: string | null;
+  fingerprint: CommentAnchorFingerprint;
+  /** Fraction (0–1) of the anchor element's box, captured at creation. */
+  relativeX: number;
+  relativeY: number;
+}
+```
+
+The `version: 1` field is a future-proofing guard. If a comment is loaded whose `anchor.version` is higher than `1` (written by a newer version of HellDots than the one running), the anchor resolves as orphaned instead of being half-interpreted. This keeps older clients safe when comments are shared across deployments at different versions.
+
+`relativeX` and `relativeY` are fractions from `0` to `1` of the anchor element's bounding box. They record where within the element the user clicked, so the marker appears at the right spot even when the element changes size.
+
+## The fingerprint
+
+The fingerprint is a content-level description of the element — independent of its position in the DOM tree. It is the fallback when the CSS selector no longer matches.
+
+```ts
+export interface CommentAnchorFingerprint {
+  tagName: string;
+  /** First ~64 chars of the element's normalized textContent. */
+  textSnippet: string;
+  /** Stable attributes only (id, name, role, aria-label, non-framework data-*). */
+  attributes: Record<string, string>;
+  /** 0-based position among same-tag siblings at creation time. */
+  siblingIndex: number;
+  siblingCount: number;
+}
+```
+
+Only stable, semantic attributes are stored — `id`, `name`, `role`, `aria-label`, and non-framework `data-*` attributes. Framework-generated identifiers like `data-reactid`, `data-v-*`, and `data-svelte-*` are excluded because they change on every build and would make the fingerprint useless after the next deploy.
+
+<Note>
+  Fuzzy fingerprint matching exists because dynamic apps regularly re-render their DOM. A React component re-mounting, a server-rendered HTML swap, or an A/B test changing element order can all break a CSS selector that was perfectly valid at creation time. The fingerprint captures the element's *content identity* — text, semantic attributes, and relative position among siblings — which survives most re-renders intact.
+</Note>
+
+## How anchors are created
+
+When a user clicks on the page in comment mode, HellDots walks up the DOM from the clicked element to find the nearest meaningful container — a `section`, a `div[class*="container"]`, or a similar structural wrapper. It then:
+
+<Steps>
+  <Step title="Generate a CSS selector">
+    HellDots tries four strategies in order, stopping at the first one that uniquely identifies the element in the current document:
+
+    1. **ID selector** — `#myElement`, if the `id` is unique on the page.
+    2. **Attribute selector** — `button[data-testid="submit"]`, using `data-testid`, `name`, or `aria-label`.
+    3. **Class path selector** — walks up to three ancestor levels combining tag names and stable CSS classes (CSS-in-JS hashes and framework-scoped classes are excluded).
+    4. **Structural selector** — a path of `tag:nth-of-type(n)` segments rooted at the nearest ancestor with an `id`, or at `body`.
+  </Step>
+  <Step title="Build the fingerprint">
+    Records the element's `tagName`, the first 64 characters of its normalized `textContent`, its stable attributes, and its 0-based index among same-tag siblings alongside the total sibling count.
+  </Step>
+  <Step title="Record click position">
+    Stores `relativeX` and `relativeY` as fractions of the anchor element's bounding box, so the marker is placed at the right spot regardless of later layout changes.
+  </Step>
+</Steps>
+
+## How anchors resolve on reload
+
+Every time `loadComments()` or `notifyNavigation()` is called, HellDots tries to re-locate each comment's anchor in the current DOM.
+
+<Steps>
+  <Step title="Try the CSS selector">
+    If `anchor.selector` is set, HellDots runs `document.querySelectorAll(selector)`. If one or more elements match, each is scored against the fingerprint. A match with a confidence score of **0.6 or higher** is accepted.
+  </Step>
+  <Step title="Fuzzy fingerprint rescue">
+    If the selector matched nothing (or scored below threshold), HellDots queries all elements with the fingerprint's `tagName` across the entire document. Each candidate is scored using a weighted combination of text similarity (50%), attribute similarity (30%), and sibling position (20%). A match scoring **0.7 or higher** is accepted. This higher threshold is required because a tag-wide search has no structural signal to guide it.
+  </Step>
+  <Step title="Mark as orphaned">
+    If no candidate crosses the rescue threshold, the comment becomes `orphaned`. Its on-page marker is not shown, but the comment remains in the inbox. The `onAnchorLost` callback fires so you can log the event or surface it to a user.
+  </Step>
+</Steps>
+
+## Anchor states
+
+Every comment has a runtime `anchorState` that reflects its relationship to the current page.
+
+| State | Meaning |
+|-------|---------|
+| `anchored` | The element was found in the current DOM. The marker is visible on the page. |
+| `orphaned` | The element could not be re-located. The comment is in the inbox but no marker is shown. `onAnchorLost` fires. |
+| `inactive` | The comment was created on a different page (its `page` pathname doesn't match `location.pathname`). No marker or resolution is attempted. |
+
+```ts
+export type AnchorState = "anchored" | "orphaned" | "inactive";
+```
+
+## Cross-page comments
+
+Every `SerializedComment` carries a `page` field set to `location.pathname` at creation time. When HellDots processes a comment whose `page` doesn't match the current URL, it is classified as `inactive` immediately — no anchor resolution is attempted and no marker is rendered. The comment stays visible in the inbox, and clicking "view on its page" navigates there (via your `navigate` option, or a full page load).
+
+## What happens when an element disappears
+
+If an element that a comment was anchored to is removed from the DOM — for example, a feature flag disables a UI section, or a component is unmounted — the comment transitions to `orphaned` on the next `loadComments()` or `notifyNavigation()` call. The on-page marker disappears, but the comment is never deleted. It remains in the inbox with its full text, author, thread, and triage data intact.
+
+<Warning>
+  `onAnchorLost` fires per comment, not per page load. If twenty comments become orphaned after a large refactor, the callback fires twenty times. Wire it to your logging or alerting system rather than surfacing individual toasts.
+</Warning>

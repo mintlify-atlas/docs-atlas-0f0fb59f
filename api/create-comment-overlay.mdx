@@ -1,0 +1,246 @@
+---
+title: "createCommentOverlay() — HellDots factory function"
+sidebarTitle: "createCommentOverlay"
+description: "The primary entry point for HellDots. Creates and mounts a CommentOverlay, safe to call before the DOM is ready, with optional deferred initialization."
+---
+
+`createCommentOverlay` is the recommended way to add HellDots to any page. Call it once with your options and a fully initialized `CommentOverlay` instance is returned — no manual DOM timing, no `document.readyState` check needed. The constructor defers its own DOM work to `DOMContentLoaded`, so you always get a real instance back regardless of when the call is made.
+
+`createCommentOverlay` is both the **default export** and a **named export** of the `helldots` package. The `CommentOverlay` class itself is also exported as a named export for advanced use cases.
+
+<Note>
+  `createCommentOverlay` is the preferred entry point over calling `new CommentOverlay()` directly. It adds the `autoInit` option (which the constructor does not accept), and its overloaded signature makes the deferred-initialization pattern explicit and type-safe.
+</Note>
+
+## Signature
+
+```ts
+// Default: returns a mounted CommentOverlay immediately
+createCommentOverlay(
+  options?: CommentOverlayOptions & { autoInit?: true }
+): CommentOverlay
+
+// With autoInit: false — returns an initializer you call yourself
+createCommentOverlay(
+  options: CommentOverlayOptions & { autoInit: false }
+): () => CommentOverlay
+```
+
+Both overloads accept the full [`CommentOverlayOptions`](#options) object. The only difference between them is whether HellDots mounts immediately or hands you a function to call when you are ready.
+
+## Returns
+
+<ResponseField name="return value" type="CommentOverlay | (() => CommentOverlay)">
+  When `autoInit` is `true` (the default), returns a live `CommentOverlay` instance. When `autoInit: false`, returns an initializer function that creates and mounts the overlay when called. The initializer returns the `CommentOverlay` instance.
+</ResponseField>
+
+## Options
+
+<ParamField body="options" type="CommentOverlayOptions & { autoInit?: boolean }">
+  Configuration object. All fields are optional. The `autoInit` field controls whether mounting happens immediately.
+
+  <Expandable title="Core options">
+    <ParamField body="user" type="{ name: string }">
+      Identity used as the author of new comments and replies. Defaults to `"Anonymous"`.
+    </ParamField>
+
+    <ParamField body="persistence" type='"localStorage" | "none"' default='"none"'>
+      When set to `"localStorage"`, comments are automatically saved and restored across page loads using the browser's localStorage. In `"none"` mode (the default) you are responsible for persisting comments via the event callbacks.
+    </ParamField>
+
+    <ParamField body="autoInit" type="boolean" default="true">
+      When `true` (the default), the overlay mounts immediately and `createCommentOverlay` returns a `CommentOverlay` instance. When `false`, nothing mounts yet — you receive an initializer function to call when you are ready. Useful for framework lifecycle control or deferred mounting.
+    </ParamField>
+
+    <ParamField body="autoScreenshot" type="boolean" default="true">
+      Capture a JPEG viewport screenshot and environment snapshot on every new comment. Set to `false` to skip the capture and save the render time.
+    </ParamField>
+
+    <ParamField body="embedCrossOriginFonts" type="boolean" default="false">
+      Re-fetch cross-origin stylesheets (e.g. Google Fonts) so their `@font-face` rules reach the screenshot renderer. Off by default — a comment widget making third-party requests on your users' behalf should be an explicit opt-in.
+    </ParamField>
+
+    <ParamField body="locale" type="string">
+      UI language. `"en"` and `"es"` ship with the package. Any unrecognised code falls back to English per-key — it degrades gracefully, it never breaks. Defaults to the browser's detected language.
+    </ParamField>
+
+    <ParamField body="shortcutKey" type="string" default='"c"'>
+      Key that toggles comment mode when pressed with `shortcutModifier`.
+    </ParamField>
+
+    <ParamField body="shortcutModifier" type='"alt" | "ctrl" | "shift"' default='"alt"'>
+      Modifier key for the comment-mode toggle shortcut.
+    </ParamField>
+
+    <ParamField body="linkParam" type="string" default='"helldotsComment"'>
+      Query parameter name used in "Copy link" URLs and read back on startup to open that comment. Override when the host application already routes on that parameter name.
+    </ParamField>
+  </Expandable>
+
+  <Expandable title="Navigation options">
+    <ParamField body="navigate" type="(page: string) => void">
+      Called instead of a full-page load when the widget navigates to another page (the inbox's "view on its page" jump). Pass your SPA router's push function so the app's state survives the navigation.
+    </ParamField>
+
+    <ParamField body="autoDetectNavigation" type="boolean" default="false">
+      When `true`, `notifyNavigation()` is called automatically on `popstate` (back/forward). pushState routing still needs an explicit `notifyNavigation()` call from the router's hook.
+    </ParamField>
+  </Expandable>
+
+  <Expandable title="Event callbacks">
+    <ParamField body="onChange" type="(event: ChangeEvent) => void">
+      Single subscription point that fires for every change. `ChangeEvent` is a discriminated union — switch on `event.type` and TypeScript narrows the payload. Fires alongside the specific callbacks below; subscribe either way, or both. A handler that throws is caught and warned about, never rolling back the change.
+    </ParamField>
+
+    <ParamField body="onCommentCreated" type="(comment: SerializedComment) => void">
+      Fired after a new comment is saved.
+    </ParamField>
+
+    <ParamField body="onReplyAdded" type="(comment: SerializedComment, reply: CommentReply) => void">
+      Fired after a reply is added to any comment.
+    </ParamField>
+
+    <ParamField body="onReplyDeleted" type="(comment: SerializedComment, reply: CommentReply) => void">
+      Fired after `deleteReply` removes a reply.
+    </ParamField>
+
+    <ParamField body="onCommentEdited" type="(comment: SerializedComment) => void">
+      Fired after `editComment` rewrites a comment's text.
+    </ParamField>
+
+    <ParamField body="onReplyEdited" type="(comment: SerializedComment, reply: CommentReply) => void">
+      Fired after `editReply` rewrites a reply's text.
+    </ParamField>
+
+    <ParamField body="onCommentDeleted" type="(id: CommentId) => void">
+      Fired after `deleteComment` removes a comment.
+    </ParamField>
+
+    <ParamField body="onCommentStatusChanged" type="(comment: SerializedComment) => void">
+      Fired after `setCommentStatus` changes a comment's lifecycle state.
+    </ParamField>
+
+    <ParamField body="onCommentUpdated" type="(comment: SerializedComment) => void">
+      Fired after type, priority, or tags change on any comment.
+    </ParamField>
+
+    <ParamField body="onAnchorLost" type="(comment: SerializedComment) => void">
+      Fired for each comment that could not be re-anchored by `loadComments` or `notifyNavigation`.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Exports
+
+```ts
+// Named exports
+import { createCommentOverlay, CommentOverlay } from "helldots";
+
+// Default export (same function)
+import createCommentOverlay from "helldots";
+```
+
+The `CommentOverlay` class is exported as a named export for advanced usage — for example, checking `instanceof`, or when you want to type a variable that holds an overlay without calling the factory first.
+
+## Examples
+
+<CodeGroup>
+
+```js Minimal — localStorage persistence
+import { createCommentOverlay } from "helldots";
+
+const overlay = createCommentOverlay({
+  user: { name: "Ana" },
+  persistence: "localStorage",
+});
+
+// overlay is a live CommentOverlay instance —
+// safe to call even before DOMContentLoaded fires.
+```
+
+```js With backend callbacks
+import { createCommentOverlay } from "helldots";
+
+const overlay = createCommentOverlay({
+  user: { name: currentUser.name },
+  onCommentCreated: (comment) => api.post("/comments", comment),
+  onReplyAdded: (comment, reply) =>
+    api.post(`/comments/${comment.id}/replies`, reply),
+  onCommentStatusChanged: (comment) =>
+    api.patch(`/comments/${comment.id}`, comment),
+  onCommentUpdated: (comment) =>
+    api.patch(`/comments/${comment.id}`, comment),
+  onCommentDeleted: (id) => api.delete(`/comments/${id}`),
+});
+
+// Restore comments from your backend on load
+const stored = await api.get("/comments");
+overlay.loadComments(stored);
+```
+
+```js Deferred initialization — autoInit: false
+import { createCommentOverlay } from "helldots";
+
+// Nothing mounts yet — initialize is a plain function.
+const initialize = createCommentOverlay({
+  user: { name: "Ana" },
+  persistence: "localStorage",
+  autoInit: false,
+});
+
+// Mount when you are ready — for example, inside a framework hook.
+// initialize() returns the CommentOverlay instance.
+const overlay = initialize();
+```
+
+</CodeGroup>
+
+### React / Next.js
+
+When using HellDots in a server-rendered framework, import and call `createCommentOverlay` only on the client side. `cleanup()` is safe to call in `useEffect`'s return — it is also safe for React 18 StrictMode's double-invoke pattern.
+
+```jsx
+import { useEffect } from "react";
+import { createCommentOverlay } from "helldots";
+
+export function Comments({ user }) {
+  useEffect(() => {
+    const overlay = createCommentOverlay({
+      user,
+      persistence: "localStorage",
+    });
+    return () => overlay.cleanup();
+  }, [user]);
+
+  return null;
+}
+```
+
+<Warning>
+  Importing `helldots` at the module level in a server-rendered app is safe — nothing touches the DOM at import time. Only the `createCommentOverlay` call (or `new CommentOverlay()`) must happen on the client.
+</Warning>
+
+### Using `autoInit: false`
+
+The `autoInit: false` overload is useful when you need to control exactly when the overlay mounts — for example, inside a framework's lifecycle hook, behind a feature flag check, or after an async operation that must complete first.
+
+```ts
+import { createCommentOverlay } from "helldots";
+
+const initialize = createCommentOverlay({
+  user: { name: "Ana" },
+  autoInit: false,
+});
+
+// Later — after your own setup is complete:
+async function boot() {
+  await myOwnSetup();
+  const overlay = initialize();
+  const data = await fetchComments();
+  overlay.loadComments(data);
+}
+```
+
+<Tip>
+  Even with `autoInit: true` (the default), `createCommentOverlay` is safe to call before `DOMContentLoaded`. The `CommentOverlay` constructor registers a `DOMContentLoaded` listener internally and defers all DOM work until the document is ready. You always get a real instance back.
+</Tip>

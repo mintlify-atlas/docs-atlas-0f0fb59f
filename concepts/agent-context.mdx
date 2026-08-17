@@ -1,0 +1,136 @@
+---
+title: "Copying HellDots comment context for AI assistants"
+sidebarTitle: "Agent Context"
+description: "Every HellDots comment has a copy button producing a plain-text block — selector, DOM path, environment, and thread — for AI coding assistants."
+---
+
+When your team leaves a comment on a bug or UI issue, HellDots captures far more than the comment text. Every comment in the inbox has a **copy** button that puts a complete plain-text context block on the clipboard. The block is structured specifically for pasting into AI coding assistants like Claude or GitHub Copilot — it contains everything the assistant needs to locate the element in your codebase and understand the reported problem.
+
+## What the context block contains
+
+The copied block is a flat, line-by-line summary of the comment and all the data HellDots captured when it was created:
+
+- **Page** — the `location.pathname` where the comment was left
+- **Viewport** — the reporter's viewport dimensions at the time of reporting (from the captured `CommentContext`, not the current viewer's window)
+- **Anchor state** — whether the comment is currently `anchored`, `orphaned`, or `hidden`
+- **Status** — the comment's lifecycle status
+- **Selector** — the best-effort CSS selector pointing at the anchored element
+- **Element** — the opening tag of the anchor element (or a reconstruction from the fingerprint if the element is not live)
+- **DOM path** — the full path from `body` down to the element, using tag, id, and up to two classes per level
+- **Nearby text** — the first ~64 characters of the element's normalized `textContent` at creation time
+- **Comment** — author name, ISO timestamp, and the comment text
+- **Type, Priority, Tags** — triage fields, omitted if not set (neutral fields never appear as "(none)")
+- **URL** — the full `location.href` at creation
+- **Screen** — the reporter's screen resolution
+- **Browser** — browser name and version
+- **OS** — operating system name and version
+
+If the comment is resolved, the block also includes **Resolution time** — the duration from `createdAt` to `resolvedAt`. If the thread has replies, they are appended as a `Replies (n):` section with one line per reply.
+
+## Example context block
+
+Here is a real example of what gets copied to the clipboard:
+
+```text
+Page: /pricing
+Viewport: 1440x900
+Anchor state: anchored
+Status: open
+Selector: #plans > div.card:nth-child(2) > button
+Element: <button class="cta" data-plan="pro">
+DOM path: body > main.layout > section#plans > div.card > button.cta
+Nearby text: "Upgrade to Pro"
+Comment by Ana (2026-07-29T10:14:00.000Z):
+"This button does nothing on mobile"
+Type: bug
+Priority: high
+Tags: checkout, ios
+URL: https://example.com/pricing
+Screen: 390x844
+Browser: Safari 17.2
+OS: iOS 17.2
+```
+
+Paste this directly into a chat with an AI assistant and it can immediately locate `#plans > div.card:nth-child(2) > button` in your templates, understand the DOM path to reason about CSS specificity, and see that the reporter was on iOS Safari at 390×844 — common iPhone dimensions — before suggesting a fix.
+
+## The automatic screenshot
+
+In addition to the text block, every comment created with the default `autoScreenshot: true` option stores a JPEG viewport capture as `contextScreenshot`. This is a data URL rendered at half scale (~30–100 KB). The widget hides itself during the render, so the toolbar never appears in the image.
+
+```ts
+interface SerializedComment {
+  /** RF1 — automatic viewport capture (JPEG data-URL). */
+  contextScreenshot: string | null;
+}
+```
+
+The screenshot is displayed in the inbox detail view and in the collapsible "Context" section of the thread popover. Set `autoScreenshot: false` when you want to skip the capture:
+
+```js
+createCommentOverlay({
+  user: { name: "Ana" },
+  autoScreenshot: false, // no screenshot taken, contextScreenshot is null
+});
+```
+
+<Note>
+  The screenshot is not included in the clipboard text block — it is available visually in the inbox UI and as the `contextScreenshot` field in the serialized comment. If you need it programmatically, call `serializeComments()` and read the `contextScreenshot` data URL from each comment.
+</Note>
+
+## The CommentContext interface
+
+The environment snapshot captured at creation time is stored in `context` on the comment. It is separate from the screenshot and records the reporter's browsing environment.
+
+```ts
+export interface CommentContext {
+  version: 1;
+  /** Full location.href at creation time. */
+  url: string;
+  viewport: { width: number; height: number };
+  /** Screen resolution (screen.width/height). */
+  screen: { width: number; height: number };
+  devicePixelRatio: number;
+  /** Raw UA — always stored, even when browser/os parsing fails. */
+  userAgent: string;
+  browser: { name: string; version: string };
+  os: { name: string; version: string };
+  language: string;
+}
+```
+
+HellDots parses browser and OS from the raw user agent string, preferring the `navigator.userAgentData` API where available. The raw `userAgent` string is always stored as a fallback. `language` comes from `navigator.language`.
+
+<Accordion title="How browser and OS detection works">
+  HellDots matches the user agent string against a prioritized list. Edge is matched before Chrome because Edge's UA contains `"Chrome"`, and Chrome is matched before Safari because Chrome's UA contains `"Safari"`. iOS is matched before macOS for the same reason — an iPhone UA also carries `"Mac OS X"`.
+
+  When `navigator.userAgentData` is present (Chromium-based browsers), HellDots reads `brands` for the browser name, skipping the randomised "GREASE" entries Chromium injects to prevent brand-list hardcoding. It reads `platform` for the OS name when available.
+
+  The raw `userAgent` string is always stored regardless, so nothing is lost if the parsed fields are incomplete.
+</Accordion>
+
+## Accessing context data programmatically
+
+The inbox UI generates and copies the context block automatically. If you need to access the raw fields from your own code, call `serializeComments()` — it returns every comment including the full `context` object and `contextScreenshot` data URL.
+
+```js
+const overlay = createCommentOverlay({ user: { name: "Ana" } });
+
+// Get all raw comment data including context fields
+const comments = overlay.serializeComments();
+
+for (const comment of comments) {
+  if (comment.context) {
+    console.log(comment.context.browser.name);   // "Safari"
+    console.log(comment.context.viewport.width); // 390
+    console.log(comment.context.os.name);        // "iOS"
+  }
+  if (comment.contextScreenshot) {
+    // JPEG data URL — render in an <img> or send to your backend
+    console.log(comment.contextScreenshot.slice(0, 50));
+  }
+}
+```
+
+<Tip>
+  When wiring HellDots to your own backend, persist the full `SerializedComment` output of `serializeComments()` — it includes `context` and `contextScreenshot`. Your backend then has all the data needed to reconstruct the context block server-side, or to display the screenshot in an admin panel, without any additional API calls to the client.
+</Tip>

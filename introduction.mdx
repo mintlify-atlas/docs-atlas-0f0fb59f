@@ -1,0 +1,65 @@
+---
+title: "HellDots: Comment Overlay Widget for Web Applications"
+sidebarTitle: "Introduction"
+description: "HellDots is an ESM widget that lets your team click anywhere on a page to leave a comment anchored to that element, with screenshots and context."
+---
+
+HellDots is a zero-configuration comment overlay you drop into any web app. Your team clicks anywhere on a live page, writes a note, and the widget anchors it to the exact DOM element — capturing a screenshot, the viewport size, the browser, the OS, and a precise CSS selector so the comment survives page refreshes and DOM changes. There is no external service: you own every byte of comment data through callbacks or optional `localStorage` persistence. HellDots works as a lightweight collaboration layer for design reviews, QA, and developer feedback without requiring a separate tool or browser extension.
+
+## How it works
+
+When someone enters comment mode (`Alt+C` / `Option+C`), a custom cursor follows their mouse. A single click drops a numbered dot on that element; dragging captures a rectangular region. Both trigger an automatic screenshot of the page as the user saw it, an environment snapshot (URL, viewport, screen, browser, OS), and an anchor fingerprint — a CSS selector, a DOM path, and a structural hash of the element. Those details are stored as plain JSON you can pass straight to your own API.
+
+Comments reappear across page loads because `loadComments()` resolves each anchor against the current DOM. If an element moved, HellDots re-attaches to it. If it disappeared entirely, the comment is marked **orphaned** rather than silently dropped.
+
+The inbox sidebar lists every comment with filters for page, status, type, priority, and tags. Each comment has a **Copy context** button that puts an agent-ready plain-text block — selector, DOM path, browser, screenshot — on the clipboard, ready to paste into an AI coding assistant or a bug tracker.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Zero-config quick start" icon="bolt" href="/quickstart">
+    One import, one function call, and a persistent toolbar appears. No accounts, no server, no build step required.
+  </Card>
+  <Card title="Install & bundle options" icon="box" href="/installation">
+    ESM package via npm, or a self-contained UMD build from the CDN. Works with any bundler or a plain `<script>` tag.
+  </Card>
+  <Card title="Backend integration" icon="database" href="/guides/backend-integration">
+    Skip `localStorage` and wire nine typed callbacks — or one `onChange` stream — to your own API. Comments are plain JSON throughout.
+  </Card>
+  <Card title="Smart element anchoring" icon="crosshairs" href="/concepts/anchoring">
+    CSS selector, DOM path, and a structural fingerprint keep comments attached even after layout changes or partial re-renders.
+  </Card>
+  <Card title="Triage & inbox" icon="inbox" href="/concepts/triage">
+    Type, priority, free-form tags, and a three-state lifecycle (open → in progress → resolved) with resolution time tracking.
+  </Card>
+  <Card title="Full API reference" icon="code" href="/api/create-comment-overlay">
+    Typed factory function, `CommentOverlay` class, all setters and serialization helpers documented in one place.
+  </Card>
+</CardGroup>
+
+## What gets captured automatically
+
+Every comment records more than its text. The **automatic screenshot** re-renders the visible DOM at half scale to a JPEG (~30–100 KB); the widget's own toolbar is excluded from the capture so it never appears in the image. Dragging a region additionally produces a full-resolution PNG crop of exactly the selected area.
+
+The **environment snapshot** captures the full `location.href`, viewport dimensions, screen resolution, device pixel ratio, user-agent string, parsed browser name and version, OS name and version, and the browser language. A bug filed at 390×844 on iOS Safari 17 says so without anyone having to ask.
+
+Set `autoScreenshot: false` to skip both captures if the rendering cost is not acceptable for your use case.
+
+## Shadow DOM isolation
+
+The entire HellDots UI — toolbar, comment box, thread popovers, inbox — lives inside a `<helldots-root>` custom element with an open Shadow DOM. Your page's CSS cannot leak into the widget, and the widget's styles cannot leak out. You get a fully encapsulated overlay without any CSS reset or specificity battles.
+
+## Package details
+
+| Detail | Value |
+|---|---|
+| Current version | `0.5.0` |
+| Module format | **ESM only** — `import` from a bundler, Vite, Next.js, or `<script type="module">` |
+| CDN / no-bundler | UMD build available at `https://unpkg.com/helldots` |
+| TypeScript | Definitions ship with the package — no separate `@types/helldots` install |
+| Node requirement | Node ≥ 18 (for SSR-safe import and tooling) |
+| License | MIT |
+
+<Note>
+  There is no CommonJS build. `require('helldots')` will not work. See [Installation](/installation) for the CDN alternative if you cannot use ESM.
+</Note>

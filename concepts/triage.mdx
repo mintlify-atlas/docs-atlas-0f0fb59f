@@ -1,0 +1,154 @@
+---
+title: "Classifying and triaging HellDots comments by type"
+sidebarTitle: "Triage"
+description: "HellDots comments carry optional type, priority, and tags, all null by default. Explore the triage dimensions, color values, and setter API."
+---
+
+HellDots lets your team classify every comment along three independent dimensions: what kind of issue it is (type), how urgent it is (priority), and any free-form labels you want to attach (tags). All three are `null` by default — a comment can be left deliberately unclassified, and classification can happen at any point after creation.
+
+## The three triage dimensions
+
+<CardGroup cols={3}>
+  <Card title="Type" icon="tag">
+    Describes the category of the issue: bug, suggestion, question, or improvement. Shown as a colored badge on inbox cards.
+  </Card>
+  <Card title="Priority" icon="arrow-up">
+    Indicates urgency: high, medium, or low. The color ramp reads as a scale — red for high, orange for medium, grey for low.
+  </Card>
+  <Card title="Tags" icon="label">
+    Free-form strings. Trimmed, lowercased, and de-duplicated by `setCommentTags`. Useful for routing comments to teams or features.
+  </Card>
+</CardGroup>
+
+## Comment types
+
+The `CommentType` field categorizes what kind of feedback the comment represents.
+
+| Type | Color | Hex |
+|------|-------|-----|
+| `bug` | Red | `#FF453A` |
+| `suggestion` | Purple | `#BF5AF2` |
+| `question` | Cyan | `#64D2FF` |
+| `improvement` | Indigo | `#5E5CE6` |
+
+```ts
+export type CommentType = "bug" | "suggestion" | "question" | "improvement";
+```
+
+These values come directly from `COMMENT_TYPES` and `TYPE_COLORS` in the HellDots source. The type badge is displayed on inbox cards, in the hover tooltip, and in the agent context block.
+
+## Comment priorities
+
+The `CommentPriority` field expresses urgency on a three-level scale.
+
+| Priority | Color | Hex |
+|----------|-------|-----|
+| `high` | Red | `#FF453A` |
+| `medium` | Orange | `#FF9F0A` |
+| `low` | Grey | `#8E8E93` |
+
+```ts
+export type CommentPriority = "high" | "medium" | "low";
+```
+
+The red/orange/grey ramp is deliberate — it signals urgency at a glance. `high` sharing red with `bug`, and `medium` sharing orange with `in_progress`, is intentional: they occupy different UI slots and no badge ever conveys meaning by color alone (WCAG 1.4.1).
+
+<Note>
+  `type` and `priority` are `null` by default — not `"bug"` or `"high"`. A neutral comment is genuinely unclassified, which is different from having a default classification. Passing `null` to `setCommentType` or `setCommentPriority` returns the field to this neutral state.
+</Note>
+
+## Tags
+
+Tags are free-form strings that let you attach custom labels — team names, feature areas, release milestones, or anything else. Before storing them, `setCommentTags` normalizes the array: each string is trimmed, lowercased, and duplicates are removed.
+
+```js
+overlay.setCommentTags("abc123", ["  Checkout ", "IOS", "checkout"]);
+// stored as ["checkout", "ios"]
+```
+
+Tags are `[]` by default (an empty array, never `null`). There is no fixed vocabulary — you decide what labels make sense for your project.
+
+<Tip>
+  Tags loaded via `loadComments()` are trusted as-is and are not re-normalized on read. Only values written through `setCommentTags` go through the trim/lowercase/dedupe pipeline.
+</Tip>
+
+## Setting triage programmatically
+
+All three methods return `false` for an unknown id or an invalid value, and make no change when they do.
+
+```js
+const overlay = createCommentOverlay({ user: { name: "Ana" } });
+
+// Classify a comment
+overlay.setCommentType("abc123", "bug");
+overlay.setCommentPriority("abc123", "high");
+overlay.setCommentTags("abc123", ["checkout", "ios"]);
+
+// Return type and priority to neutral state
+overlay.setCommentType("abc123", null);
+overlay.setCommentPriority("abc123", null);
+
+// Clear tags
+overlay.setCommentTags("abc123", []);
+```
+
+You can also classify a set of comments when your backend returns them:
+
+```js
+const overlay = createCommentOverlay({
+  user: { name: "Ana" },
+  onCommentCreated: async (comment) => {
+    const saved = await api.post("/comments", comment);
+    // Apply triage from an existing ML classifier
+    if (saved.suggestedType) {
+      overlay.setCommentType(comment.id, saved.suggestedType);
+    }
+  },
+});
+```
+
+## Reacting to triage changes
+
+The `onCommentUpdated` callback fires whenever `type`, `priority`, or `tags` change on any comment. It receives the full updated `SerializedComment`.
+
+```js
+createCommentOverlay({
+  onCommentUpdated: (comment) => {
+    api.patch(`/comments/${comment.id}`, {
+      type: comment.type,
+      priority: comment.priority,
+      tags: comment.tags,
+    });
+  },
+});
+```
+
+The same event arrives through the `onChange` stream as `"comment:updated"`:
+
+```js
+createCommentOverlay({
+  onChange: (event) => {
+    if (event.type === "comment:updated") {
+      console.log(event.comment.type, event.comment.priority, event.comment.tags);
+    }
+  },
+});
+```
+
+## Inbox filtering
+
+The inbox filter panel lets you narrow the visible list by any combination of page, status, type, and priority simultaneously. All four dimensions are shown as chip filters at the same time — selecting multiple chips within a dimension acts as OR (show any bug or suggestion), and chips across dimensions act as AND (show high-priority bugs on /checkout).
+
+Resolved comments are included in filter results. Filtering does not change or delete any comment data — it only affects the inbox view.
+
+## How triage appears in the data
+
+All three triage fields are present on both the runtime `Comment` object and the serialized `SerializedComment`:
+
+```ts
+interface SerializedComment {
+  type: CommentType | null;       // null = deliberately unclassified
+  priority: CommentPriority | null; // null = deliberately unprioritised
+  tags: string[];                 // [] = no tags
+}
+```

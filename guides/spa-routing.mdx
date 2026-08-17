@@ -1,0 +1,165 @@
+---
+title: "Using HellDots inside a single-page app with routing"
+sidebarTitle: "SPA Routing"
+description: "Keep markers in sync after pushState navigations with notifyNavigation, wire cross-page jumps through the navigate option, and create shareable deep links."
+---
+
+In a traditional multi-page app each route change triggers a full page reload, and HellDots re-initializes itself fresh every time. In a single-page app the browser never reloads — the JavaScript router swaps the DOM in place while the overlay instance lives on unchanged. Without an explicit signal, the widget keeps showing markers for the previous route and never re-anchors comments against the new page's elements.
+
+## Why `notifyNavigation()` is needed
+
+When your router pushes a new path, `window.location` changes and the DOM is rebuilt, but no `DOMContentLoaded` or `load` event fires. HellDots has no way to detect this automatically for `pushState`-based navigation, so you call `notifyNavigation()` from your router's post-render hook.
+
+Calling it does four things at once:
+
+1. Reclassifies every comment against the new `location.pathname` (active, inactive, or orphaned)
+2. Re-resolves anchors against the new DOM, rebuilding markers
+3. Moves the inbox onto the new page
+4. Follows up any pending deep link from a `commentLink()` URL
+
+`notifyNavigation()` returns the same summary object as `loadComments`:
+
+```js
+const { anchored, orphaned, inactive } = overlay.notifyNavigation();
+```
+
+It is also safe to call after a same-path re-render — for example, when your app replaces a route's DOM without changing the URL.
+
+## React Router and Vue Router examples
+
+<Tabs>
+  <Tab title="React Router">
+    React Router v6 exposes a navigation listener through `useEffect` on `useLocation`. Call `notifyNavigation()` whenever the location changes:
+
+    ```jsx
+    import { useEffect } from "react";
+    import { useLocation } from "react-router-dom";
+    import { createCommentOverlay } from "helldots";
+
+    // Initialize once at the app root
+    const overlay = createCommentOverlay({
+      user: { name: currentUser.name },
+      persistence: "localStorage",
+      navigate: (page) => router.navigate(page), // keep SPA state on cross-page jumps
+    });
+
+    function NavigationSync() {
+      const location = useLocation();
+
+      useEffect(() => {
+        overlay.notifyNavigation();
+      }, [location]);
+
+      return null;
+    }
+
+    // Render <NavigationSync /> inside your <Router>
+    ```
+
+    For React Router v5 use `history.listen`:
+
+    ```js
+    history.listen(() => overlay.notifyNavigation());
+    ```
+  </Tab>
+  <Tab title="Vue Router">
+    Use `router.afterEach` — it fires after every navigation once the new route's component has rendered:
+
+    ```js
+    import { createRouter } from "vue-router";
+    import { createCommentOverlay } from "helldots";
+
+    const router = createRouter({ /* … */ });
+
+    const overlay = createCommentOverlay({
+      user: { name: currentUser.name },
+      persistence: "localStorage",
+      navigate: (page) => router.push(page),
+    });
+
+    router.afterEach(() => overlay.notifyNavigation());
+    ```
+  </Tab>
+  <Tab title="Plain popstate">
+    For apps that manage `history.pushState` themselves, combine a manual call in your navigation handler with `autoDetectNavigation: true` for the browser's back and forward buttons:
+
+    ```js
+    const overlay = createCommentOverlay({
+      user: { name: currentUser.name },
+      persistence: "localStorage",
+      autoDetectNavigation: true, // covers popstate (back/forward) automatically
+    });
+
+    // Call after every pushState navigation in your own router
+    function navigateTo(path) {
+      history.pushState({}, "", path);
+      renderRoute(path);
+      overlay.notifyNavigation();
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## The `navigate` option: cross-page jumps without a reload
+
+HellDots' inbox has a "view on its page" button for every comment. By default it navigates there with a full page load. Pass `navigate` to route that jump through your SPA router instead, so the app's state — auth, scroll position, open panels — survives the transition.
+
+```js
+const overlay = createCommentOverlay({
+  user: { name: currentUser.name },
+  // React Router v6
+  navigate: (page) => router.navigate(page),
+  // Vue Router
+  // navigate: (page) => router.push(page),
+});
+```
+
+After `navigate` is called and your route renders, call `overlay.notifyNavigation()` so the widget re-anchors against the new DOM (your `afterEach` / `useLocation` hook handles this automatically if you set it up as shown above).
+
+## `autoDetectNavigation` for back and forward
+
+Setting `autoDetectNavigation: true` makes the widget listen for `popstate` events (the browser's back and forward buttons) and call `notifyNavigation()` automatically. It does not cover `pushState`-based navigations — those still need an explicit call from your router hook.
+
+```js
+const overlay = createCommentOverlay({
+  user: { name: currentUser.name },
+  persistence: "localStorage",
+  autoDetectNavigation: true, // back/forward are handled automatically
+  navigate: (page) => router.push(page),
+});
+
+// Still needed for forward navigations
+router.afterEach(() => overlay.notifyNavigation());
+```
+
+## Deep links with `commentLink` and `linkParam`
+
+Every comment has a shareable URL. Retrieve it with `commentLink(id)`:
+
+```js
+const url = overlay.commentLink(commentId);
+// e.g. "https://example.com/pricing?helldotsComment=abc123XYZ"
+```
+
+The URL encodes the comment id in a query parameter. Opening it in any browser where the comments are available opens the inbox directly on that comment's thread. The parameter stays in the URL after navigation so the link can be reloaded or re-copied.
+
+The parameter name defaults to `"helldotsComment"`. Override it if your app already routes on that name:
+
+```js
+const overlay = createCommentOverlay({
+  user: { name: currentUser.name },
+  linkParam: "feedback", // ?feedback=<id>
+});
+```
+
+<Note>
+  Deep links work across page navigations: the id is remembered and retried after every `loadComments()` call, so a link functions even when comments are fetched asynchronously from a backend after the initial render.
+</Note>
+
+## Summary of SPA-related options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `navigate` | `(page: string) => void` | full page load | Routes the widget's cross-page jumps through your SPA router |
+| `autoDetectNavigation` | `boolean` | `false` | Calls `notifyNavigation()` automatically on `popstate` |
+| `linkParam` | `string` | `"helldotsComment"` | Query parameter name used in shareable comment URLs |

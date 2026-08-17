@@ -1,0 +1,214 @@
+---
+title: "Wiring HellDots change callbacks to your own backend"
+sidebarTitle: "Backend Integration"
+description: "Send every comment event to your API, persist the SerializedComment JSON shape, and reconcile after remote deletions with clearComments and loadComments."
+---
+
+HellDots ships with optional `localStorage` persistence for quick prototypes, but production apps need comments stored on a real server — so they survive across devices, stay consistent for multiple users, and don't vanish when someone clears their browser data. The callback API gives you a precise hook for every mutation so you can mirror each change to whatever backend you already have.
+
+## Why callbacks beat localStorage for production
+
+`persistence: "localStorage"` is intentionally scoped to one browser. Two team members see different comments, and a comment deleted on one machine can reappear if a second tab saves its in-memory state afterwards. Callbacks let your server be the single source of truth — every change is a plain JSON payload you POST, PATCH, or DELETE with whatever HTTP client you already use.
+
+## The `onChange` unified event stream
+
+When everything flows to one endpoint, subscribe to `onChange` instead of wiring nine individual functions. It fires for every mutation as a discriminated union — switch on `event.type` and TypeScript narrows the payload automatically.
+
+```ts
+import { createCommentOverlay } from "helldots";
+import type { ChangeEvent } from "helldots";
+
+const overlay = createCommentOverlay({
+  user: { name: currentUser.name },
+  onChange: (event: ChangeEvent) => {
+    switch (event.type) {
+      case "comment:created":
+        api.post("/comments", event.comment);
+        break;
+      case "comment:edited":
+        api.patch(`/comments/${event.comment.id}`, event.comment);
+        break;
+      case "comment:status-changed":
+        api.patch(`/comments/${event.comment.id}`, { status: event.comment.status });
+        break;
+      case "comment:updated":
+        api.patch(`/comments/${event.comment.id}`, event.comment);
+        break;
+      case "comment:deleted":
+        api.delete(`/comments/${event.id}`);
+        break;
+      case "comment:anchor-lost":
+        api.patch(`/comments/${event.comment.id}`, { anchorState: "orphaned" });
+        break;
+      case "reply:added":
+        api.post(`/comments/${event.comment.id}/replies`, event.reply);
+        break;
+      case "reply:deleted":
+        api.delete(`/comments/${event.comment.id}/replies/${event.reply.id}`);
+        break;
+      case "reply:edited":
+        api.patch(
+          `/comments/${event.comment.id}/replies/${event.reply.id}`,
+          event.reply
+        );
+        break;
+    }
+  },
+});
+```
+
+## Individual callbacks
+
+If your backend has separate endpoints for each operation, the individual callbacks give you the same events without the switch statement. They fire at exactly the same moments as `onChange` — subscribe to either, or both.
+
+| Callback | Fires when | Payload |
+|---|---|---|
+| `onCommentCreated(comment)` | A new comment is saved | `SerializedComment` |
+| `onReplyAdded(comment, reply)` | A reply is added to any comment | `SerializedComment`, `CommentReply` |
+| `onReplyDeleted(comment, reply)` | A reply is removed | `SerializedComment`, `CommentReply` |
+| `onCommentEdited(comment)` | A comment's text is rewritten | `SerializedComment` |
+| `onReplyEdited(comment, reply)` | A reply's text is rewritten | `SerializedComment`, `CommentReply` |
+| `onCommentStatusChanged(comment)` | Status moves between open / in_progress / resolved | `SerializedComment` |
+| `onCommentUpdated(comment)` | Type, priority, or tags change | `SerializedComment` |
+| `onCommentDeleted(id)` | A comment is removed | `CommentId` |
+| `onAnchorLost(comment)` | A comment could not be re-anchored on load | `SerializedComment` |
+
+```js
+const overlay = createCommentOverlay({
+  user: { name: currentUser.name },
+  onCommentCreated: (comment) =>
+    api.post("/comments", comment),
+  onReplyAdded: (comment, reply) =>
+    api.post(`/comments/${comment.id}/replies`, reply),
+  onReplyDeleted: (comment, reply) =>
+    api.delete(`/comments/${comment.id}/replies/${reply.id}`),
+  onCommentEdited: (comment) =>
+    api.patch(`/comments/${comment.id}`, comment),
+  onReplyEdited: (comment, reply) =>
+    api.patch(`/comments/${comment.id}/replies/${reply.id}`, reply),
+  onCommentStatusChanged: (comment) =>
+    api.patch(`/comments/${comment.id}`, { status: comment.status }),
+  onCommentUpdated: (comment) =>
+    api.patch(`/comments/${comment.id}`, comment),
+  onCommentDeleted: (id) =>
+    api.delete(`/comments/${id}`),
+  onAnchorLost: (comment) =>
+    api.patch(`/comments/${comment.id}`, { anchorState: "orphaned" }),
+});
+```
+
+## The `serializeComments` / `loadComments` round-trip
+
+Every comment is plain JSON — call `serializeComments()` to get the current in-memory state as a `SerializedComment[]` array you can pass straight to your API, and hand the data back to `loadComments()` on the next page load to restore it.
+
+<CodeGroup>
+
+```js fetch
+// On mount — restore comments from your server
+const overlay = createCommentOverlay({
+  user: { name: currentUser.name },
+  onCommentCreated: (comment) =>
+    fetch("/api/comments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(comment),
+    }),
+  onCommentDeleted: (id) =>
+    fetch(`/api/comments/${id}`, { method: "DELETE" }),
+  onCommentStatusChanged: (comment) =>
+    fetch(`/api/comments/${comment.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(comment),
+    }),
+});
+
+const res = await fetch("/api/comments");
+const stored = await res.json();
+overlay.loadComments(stored);
+```
+
+```js axios
+import axios from "axios";
+
+const overlay = createCommentOverlay({
+  user: { name: currentUser.name },
+  onCommentCreated: (comment) =>
+    axios.post("/api/comments", comment),
+  onCommentDeleted: (id) =>
+    axios.delete(`/api/comments/${id}`),
+  onCommentStatusChanged: (comment) =>
+    axios.patch(`/api/comments/${comment.id}`, comment),
+});
+
+const { data: stored } = await axios.get("/api/comments");
+overlay.loadComments(stored);
+```
+
+</CodeGroup>
+
+`loadComments` returns a summary of how anchoring resolved for each comment:
+
+```js
+const { anchored, orphaned, inactive } = overlay.loadComments(stored);
+console.log(`Loaded: ${anchored} anchored, ${orphaned} orphaned, ${inactive} inactive`);
+```
+
+- **`anchored`** — comments that found their element on this page
+- **`orphaned`** — comments whose anchor element is gone; shown in the inbox but without an on-page marker
+- **`inactive`** — comments that belong to a different page; tracked in memory, shown in the inbox's "all pages" view
+
+## Reconciling against a remote backend after deletions
+
+`loadComments` replaces comments by id, but it never removes a comment that exists in memory and is absent from the incoming array. To fully reconcile against a server-side state — including deletions that happened elsewhere — call `clearComments()` first, then `loadComments` with the fresh data:
+
+```js
+async function syncFromServer(overlay) {
+  const { data: fresh } = await axios.get("/api/comments");
+  overlay.clearComments();               // wipe everything — no callbacks fired
+  overlay.loadComments(fresh);           // restore authoritative server state
+}
+```
+
+`clearComments()` removes every comment from memory, the on-page markers, and (in `localStorage` mode) the persisted store. It fires no per-comment callbacks, so your backend won't receive a flood of delete events.
+
+## The `SerializedComment` JSON shape
+
+Every object returned by `serializeComments()` or delivered to a callback conforms to `SerializedComment`. Key fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `schemaVersion` | `number` (optional) | Stamped as `1` by `serializeComments()`; absent on payloads predating that field |
+| `id` | `string \| number` | 21-char nanoid for new comments; numeric for legacy ones. Compare with `String(a) === String(b)` |
+| `text` | `string` | Comment body |
+| `author` | `string` | Display name of the author |
+| `createdAt` | `string` | ISO 8601 timestamp |
+| `editedAt` | `string \| null` | ISO timestamp of the last edit; `null` when never edited |
+| `page` | `string` | `location.pathname` where the comment was created |
+| `status` | `"open" \| "in_progress" \| "resolved"` | Lifecycle state |
+| `type` | `"bug" \| "suggestion" \| "question" \| "improvement" \| null` | Category |
+| `priority` | `"high" \| "medium" \| "low" \| null` | Priority level |
+| `tags` | `string[]` | Free-form labels, trimmed and lowercased |
+| `replies` | `CommentReply[]` | Thread replies |
+| `anchor` | `CommentAnchor \| null` | CSS selector + DOM fingerprint for re-anchoring |
+| `context` | `CommentContext \| null` | Environment snapshot (URL, viewport, browser, OS) |
+| `contextScreenshot` | `string \| null` | Automatic JPEG viewport capture as a data-URL |
+| `screenshots` | `string[]` | User-attached screenshots (data-URLs), max 5 |
+| `resolvedAt` | `string \| null` | ISO timestamp set when resolved; cleared on reopen |
+
+## Error handling
+
+A callback that throws is caught, logged as a warning, and never rolled back. The mutation that triggered the event has already been applied to the widget's in-memory state before the callback runs — throwing from a handler does not undo the user's action. Design your callbacks to be fire-and-forget: queue a retry on your side rather than letting the error surface to HellDots.
+
+```js
+createCommentOverlay({
+  onCommentCreated: async (comment) => {
+    try {
+      await api.post("/comments", comment);
+    } catch (err) {
+      // Queue for retry — the widget's state is already updated
+      retryQueue.push({ action: "create", comment });
+    }
+  },
+});
+```

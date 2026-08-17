@@ -1,0 +1,190 @@
+---
+title: "Using HellDots with Next.js, Remix, and Astro apps"
+sidebarTitle: "SSR Frameworks"
+description: "Mount HellDots safely in SSR apps using useEffect and cleanup, defer DOM work with autoInit: false, and handle React StrictMode double-invoke correctly."
+---
+
+HellDots works with every major server-rendering framework, but DOM-dependent widgets and SSR share a fundamental tension: the server has no `document`, no `window`, and no page to mount a toolbar onto. HellDots resolves this cleanly — importing the package on the server is completely safe because nothing touches the DOM at import time. The widget only does DOM work when `createCommentOverlay` is called, and you control exactly when that happens.
+
+## Server-side safety
+
+The package's entry point (`src/index.js`) only exports a factory function. No module-level side effects touch the DOM, so bundlers that evaluate imports on the server — Next.js App Router, Remix's loader pipeline, Astro's build — won't encounter `document is not defined` errors at import time.
+
+```js
+// Safe to import anywhere — server, edge, or browser
+import { createCommentOverlay } from "helldots";
+
+// Only call createCommentOverlay() in client-side code
+```
+
+## Framework examples
+
+<Tabs>
+  <Tab title="Next.js App Router">
+    Mark the component `"use client"` and initialize inside `useEffect`. The empty dependency array means the overlay is created once after the first render and torn down when the component unmounts.
+
+    ```tsx
+    "use client";
+
+    import { useEffect } from "react";
+    import { createCommentOverlay } from "helldots";
+
+    interface Props {
+      user: { name: string };
+    }
+
+    export function CommentsOverlay({ user }: Props) {
+      useEffect(() => {
+        const overlay = createCommentOverlay({
+          user,
+          persistence: "localStorage",
+        });
+
+        return () => overlay.cleanup();
+      }, [user]);
+
+      return null;
+    }
+    ```
+
+    Add the component to your root layout so it's present on every page:
+
+    ```tsx
+    // app/layout.tsx
+    import { CommentsOverlay } from "@/components/CommentsOverlay";
+
+    export default function RootLayout({ children }: { children: React.ReactNode }) {
+      return (
+        <html lang="en">
+          <body>
+            {children}
+            <CommentsOverlay user={{ name: "Ana" }} />
+          </body>
+        </html>
+      );
+    }
+    ```
+  </Tab>
+  <Tab title="Next.js Pages Router">
+    The Pages Router's `_app.tsx` is a natural place for a global widget:
+
+    ```tsx
+    import { useEffect } from "react";
+    import type { AppProps } from "next/app";
+    import { createCommentOverlay } from "helldots";
+
+    export default function App({ Component, pageProps }: AppProps) {
+      useEffect(() => {
+        const overlay = createCommentOverlay({
+          user: { name: "Ana" },
+          persistence: "localStorage",
+        });
+
+        return () => overlay.cleanup();
+      }, []);
+
+      return <Component {...pageProps} />;
+    }
+    ```
+  </Tab>
+  <Tab title="Remix">
+    In Remix, initialize inside a `useEffect` in your root component or a layout route. The cleanup function handles the unmount case:
+
+    ```tsx
+    import { useEffect } from "react";
+    import { Outlet } from "@remix-run/react";
+    import { createCommentOverlay } from "helldots";
+
+    export default function Root() {
+      useEffect(() => {
+        const overlay = createCommentOverlay({
+          user: { name: "Ana" },
+          persistence: "localStorage",
+        });
+
+        return () => overlay.cleanup();
+      }, []);
+
+      return <Outlet />;
+    }
+    ```
+  </Tab>
+  <Tab title="Astro">
+    Use the `client:only="react"` (or `client:only="vue"`) directive to ensure the component is never rendered on the server. For a framework-free Astro component, use an inline `<script>` tag:
+
+    ```astro
+    ---
+    // src/components/CommentsOverlay.astro
+    ---
+
+    <script>
+      import { createCommentOverlay } from "helldots";
+
+      const overlay = createCommentOverlay({
+        user: { name: "Ana" },
+        persistence: "localStorage",
+      });
+    </script>
+    ```
+
+    Add it to your base layout:
+
+    ```astro
+    ---
+    // src/layouts/BaseLayout.astro
+    import CommentsOverlay from "../components/CommentsOverlay.astro";
+    ---
+
+    <html lang="en">
+      <head><!-- … --></head>
+      <body>
+        <slot />
+        <CommentsOverlay />
+      </body>
+    </html>
+    ```
+
+    If you're using a React component inside Astro, use `client:only` so Astro skips server rendering entirely:
+
+    ```astro
+    <CommentsOverlay client:only="react" />
+    ```
+  </Tab>
+</Tabs>
+
+## Deferred initialization with `autoInit: false`
+
+For situations where you need the overlay instance before you're ready to mount it — for example, to pre-wire callbacks before the component tree is ready — pass `autoInit: false`. Instead of a `CommentOverlay` instance, `createCommentOverlay` returns an initializer function you call when you're ready:
+
+```ts
+import { createCommentOverlay } from "helldots";
+
+// Returns () => CommentOverlay instead of CommentOverlay
+const initialize = createCommentOverlay({
+  autoInit: false,
+  user: { name: "Ana" },
+  persistence: "localStorage",
+});
+
+// Later, when you're ready to mount the DOM
+const overlay = initialize();
+```
+
+This is useful when you need to set up the configuration object early (perhaps in a module that runs before React mounts) but want to defer the actual DOM work until later.
+
+## `cleanup()` and React StrictMode
+
+React 18 StrictMode intentionally mounts and unmounts every component twice in development to surface cleanup bugs. HellDots has been hardened against this since 0.5.0: `cleanup()` called while the document is still loading cancels the deferred mount, so the zombie UI that used to appear when StrictMode unmounted during the initial load is gone.
+
+Always return `cleanup()` from your `useEffect`:
+
+```tsx
+useEffect(() => {
+  const overlay = createCommentOverlay({ user, persistence: "localStorage" });
+
+  // This runs on unmount — required for StrictMode safety and route cleanup
+  return () => overlay.cleanup();
+}, [user]);
+```
+
+`cleanup()` removes the `<helldots-root>` element from the DOM, detaches all event listeners, and disconnects all observers. After calling it the `overlay` instance should be considered dead — create a new one if you need the widget again.

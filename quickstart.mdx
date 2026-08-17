@@ -1,47 +1,177 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with HellDots: Your First Comment Overlay"
+sidebarTitle: "Quickstart"
+description: "Install HellDots, initialize with localStorage, leave your first anchored comment with automatic screenshot, and explore the inbox sidebar in minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
+HellDots is designed to go from install to your first comment in under five minutes. This guide walks through the minimal setup using `localStorage` persistence — the fastest way to try the widget before wiring it to your own backend. By the end you'll have a live overlay, understand what data it captures, and know where to go next.
 
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+## Installation
 
-## Prerequisites
+Add HellDots to your project with your preferred package manager.
 
-Before you begin, you must have:
+<CodeGroup>
+```bash npm
+npm install helldots
+```
 
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
+```bash yarn
+yarn add helldots
+```
 
-## Get started
+```bash pnpm
+pnpm add helldots
+```
+</CodeGroup>
+
+<Tip>
+  **No bundler?** Use the self-contained UMD build from the CDN instead — no install needed:
+
+  ```html
+  <script src="https://unpkg.com/helldots"></script>
+  <script>
+    HellDots.createCommentOverlay({ user: { name: "Ana" } });
+  </script>
+  ```
+
+  The `HellDots` global is available immediately after the script loads.
+</Tip>
+
+## Set up the overlay
+
+Follow these steps to get your first comment overlay running.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Install the package">
+    Run the install command above for your package manager. HellDots ships as ESM only, so it works out of the box with Vite, Next.js, Remix, Astro, and any other modern bundler.
+
+    Confirm the install succeeded:
 
     ```bash
-    npm install your-package
+    node -e "import('helldots').then(m => console.log(Object.keys(m)))"
+    # ['createCommentOverlay', 'CommentOverlay', 'default']
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
 
-    ```bash
-    your-cli init
+  <Step title="Initialize with localStorage persistence">
+    Import `createCommentOverlay` and call it once at the top level of your app — or inside a client-only entry point. The call below is the exact quick-start from the README:
+
+    ```js
+    import { createCommentOverlay } from "helldots";
+
+    createCommentOverlay({
+      user: { name: "Ana" },
+      persistence: "localStorage",
+    });
     ```
+
+    That's it. A small toolbar appears at the bottom of the page. Comments are saved to `localStorage` and restored automatically on every page load — no backend required.
+
+    <Note>
+      `createCommentOverlay` is safe to call before the DOM is ready. The overlay defers its own DOM work to `DOMContentLoaded`, so you always get a real `CommentOverlay` instance back immediately.
+    </Note>
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
 
-    ```bash
-    your-cli start
-    ```
+  <Step title="Enter comment mode and leave a comment">
+    Press **Alt+C** (Windows / Linux) or **Option+C** (macOS) to toggle comment mode. The cursor changes to a crosshair dot.
+
+    - **Click anywhere** on the page to anchor a comment to that element.
+    - **Drag a region** to select an area and attach a full-resolution PNG crop of it.
+
+    A comment box appears. Type your note, optionally choose a type (Bug, Suggestion, Question, Improvement) and priority, then click **Save**. A numbered dot marks the spot on the page.
+
+    Press **Alt+C** / **Option+C** again to exit comment mode without leaving a comment.
+  </Step>
+
+  <Step title="View comments in the inbox sidebar">
+    Click the **Inbox** button in the toolbar (or press your configured shortcut) to open the right-side sidebar. The inbox shows every comment across all pages, with filters for:
+
+    - **Page** — only the current route, or all pages
+    - **Status** — open, in progress, resolved
+    - **Type** — bug, suggestion, question, improvement
+    - **Priority** — high, medium, low
+
+    Click any comment card to open the thread, add a reply, change the status, or copy the agent-ready context block to your clipboard.
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## What just happened?
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+When you saved that first comment, HellDots did several things automatically in the background:
+
+**Screenshot capture.** The overlay re-rendered the visible DOM to a JPEG at half scale (~30–100 KB). The widget's own toolbar was excluded from the render — it never appears in the screenshot. If you dragged a region, a second full-resolution PNG crop was attached.
+
+**Environment snapshot.** The comment stores the full `location.href`, viewport dimensions (`window.innerWidth` × `window.innerHeight`), screen resolution, device pixel ratio, browser name and version, OS name and version, and browser language. This context appears in the inbox's detail view under **Context** and in the agent-ready copy block.
+
+**Anchor fingerprint.** HellDots recorded a best-effort CSS selector, a DOM path, and a structural fingerprint of the clicked element (tag name, text content, stable attributes, sibling position). On next load, `loadComments()` resolves each anchor against the live DOM — if the element moved, it re-attaches; if it vanished, the comment is marked **orphaned**.
+
+**localStorage persistence.** With `persistence: "localStorage"`, all comment data (including screenshots) is serialized under a single key. Browsers cap this at roughly 5 MB — around a hundred comments with screenshots. If the quota fills, HellDots automatically sheds the oldest automatic screenshots and retries, so the comments themselves always survive.
+
+## Framework usage
+
+<Tabs>
+  <Tab title="React / Next.js">
+    Call `createCommentOverlay` inside a `useEffect` to keep it client-only and clean up on unmount:
+
+    ```jsx
+    import { useEffect } from "react";
+    import { createCommentOverlay } from "helldots";
+
+    export function Comments({ user }) {
+      useEffect(() => {
+        const overlay = createCommentOverlay({ user, persistence: "localStorage" });
+        return () => overlay.cleanup();
+      }, [user]);
+
+      return null;
+    }
+    ```
+
+    Importing `helldots` at the module level is safe in SSR — nothing touches the DOM until `createCommentOverlay` is called.
+  </Tab>
+  <Tab title="Vue / Nuxt">
+    ```js
+    import { onMounted, onUnmounted } from "vue";
+    import { createCommentOverlay } from "helldots";
+
+    let overlay;
+
+    onMounted(() => {
+      overlay = createCommentOverlay({
+        user: { name: "Ana" },
+        persistence: "localStorage",
+      });
+    });
+
+    onUnmounted(() => {
+      overlay?.cleanup();
+    });
+    ```
+  </Tab>
+  <Tab title="Plain HTML (ESM)">
+    ```html
+    <script type="module">
+      import { createCommentOverlay } from "https://unpkg.com/helldots/dist/helldots.esm.js";
+
+      createCommentOverlay({
+        user: { name: "Ana" },
+        persistence: "localStorage",
+      });
+    </script>
+    ```
+  </Tab>
+</Tabs>
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Backend integration" icon="server" href="/guides/backend-integration">
+    Replace `localStorage` with your own API using typed callbacks or the single `onChange` stream.
+  </Card>
+  <Card title="SPA routing" icon="route" href="/guides/spa-routing">
+    Wire `notifyNavigation()` to your client-side router so comments re-anchor after every route change.
+  </Card>
+  <Card title="Options reference" icon="sliders" href="/api/options">
+    Explore every configuration option — shortcuts, locale, screenshot behavior, link params, and more.
+  </Card>
+</CardGroup>

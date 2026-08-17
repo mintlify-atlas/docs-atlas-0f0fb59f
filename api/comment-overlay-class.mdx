@@ -1,0 +1,526 @@
+---
+title: "CommentOverlay class — HellDots instance API"
+sidebarTitle: "CommentOverlay"
+description: "Complete reference for every public property and method on a CommentOverlay instance, including setters, serialization, navigation sync, and cleanup."
+---
+
+A `CommentOverlay` instance is the live handle to everything HellDots does on a page. You normally obtain one by calling [`createCommentOverlay()`](/api/create-comment-overlay), which handles DOM timing and the `autoInit` option. The class is also exported as a named export for advanced use cases — such as `instanceof` checks or explicit typing — but you rarely need to call `new CommentOverlay()` directly.
+
+## API summary
+
+```ts
+const overlay = createCommentOverlay(options);
+
+overlay.comments;                                     // Comment[]
+overlay.commentMode;                                  // boolean
+overlay.toggleCommentMode();
+overlay.addReply(commentOrId, text, screenshots?);    // → CommentReply | null
+overlay.deleteReply(commentId, replyId);              // → boolean
+overlay.editComment(id, text);                        // → boolean
+overlay.editReply(commentId, replyId, text);          // → boolean
+overlay.commentLink(id);                              // → string | null
+overlay.serializeComments();                          // → SerializedComment[]
+overlay.loadComments(data);                           // → { anchored, orphaned, inactive }
+overlay.notifyNavigation();                           // → { anchored, orphaned, inactive }
+overlay.clearComments();
+overlay.deleteComment(id);                            // → boolean
+overlay.setCommentStatus(id, status);                 // → boolean
+overlay.setCommentType(id, type);                     // → boolean
+overlay.setCommentPriority(id, priority);             // → boolean
+overlay.setCommentTags(id, tags);                     // → boolean
+overlay.cleanup();
+```
+
+## Boolean return convention
+
+Most mutating methods return a `boolean`. A return value of `false` means **the operation was a no-op** — either because the `id` did not resolve to a known comment, or because the supplied value was invalid. The widget state is unchanged when `false` is returned. A return value of `true` means the mutation was applied (or, in the case of `setCommentStatus`, that the comment is already in the requested state).
+
+<Note>
+  `editComment` and `editReply` also return `false` when the new text is blank or identical to the current text. Calling them with an unchanged value will never brand a comment as edited.
+</Note>
+
+## Properties
+
+<ResponseField name="comments" type="Comment[]">
+  Live array of all comments currently loaded in the overlay, across all anchor states. Each element is a `Comment` object — the in-memory representation that includes the live DOM reference (`container: HTMLElement | null`) alongside all serializable fields. Inspect this array to read the current state; mutate it only through the methods below.
+</ResponseField>
+
+<ResponseField name="commentMode" type="boolean">
+  Whether comment-placement mode is currently active. When `true`, the cursor changes to a crosshair and the next click on the page opens the comment composition box. Read this to check the current state; use `toggleCommentMode()` to change it.
+</ResponseField>
+
+---
+
+## Methods
+
+### `toggleCommentMode()`
+
+Toggles comment-placement mode on or off. When activated, the page cursor changes and the next click opens the comment composition box at that position. When deactivated, any open composition box is dismissed. The inbox is automatically closed when comment mode turns on.
+
+```ts
+overlay.toggleCommentMode();
+// overlay.commentMode is now true (or false if it was true)
+```
+
+This method has no return value. It is also what the toolbar button and the keyboard shortcut (`Alt`+`C` by default) call internally.
+
+---
+
+### `addReply()`
+
+Adds a reply to an existing comment. Accepts either the live `Comment` object or its id.
+
+```ts
+addReply(
+  comment: Comment | CommentId,
+  text: string,
+  screenshots?: string[]
+): CommentReply | null
+```
+
+<ParamField body="comment" type="Comment | CommentId" required>
+  The comment to reply to. Pass the live `Comment` object from `overlay.comments`, or a `CommentId` (string or number). When an id is passed and does not resolve, the method returns `null`.
+</ParamField>
+
+<ParamField body="text" type="string" required>
+  The reply body text.
+</ParamField>
+
+<ParamField body="screenshots" type="string[]">
+  Optional array of data-URL strings to attach to the reply as screenshots.
+</ParamField>
+
+<ResponseField name="return value" type="CommentReply | null">
+  The newly created `CommentReply` object, or `null` when a `CommentId` was passed and did not resolve to a known comment.
+</ResponseField>
+
+Fires `onReplyAdded(comment, reply)` and the `onChange` stream with `{ type: "reply:added" }`.
+
+```ts
+const reply = overlay.addReply(commentId, "Looks good to me!");
+if (reply === null) {
+  console.warn("Comment not found");
+}
+```
+
+---
+
+### `deleteReply()`
+
+Removes one reply from a thread. The parent comment is untouched — deleting the last reply leaves the comment itself standing.
+
+```ts
+deleteReply(commentId: CommentId, replyId: CommentId): boolean
+```
+
+<ParamField body="commentId" type="CommentId" required>
+  Id of the parent comment.
+</ParamField>
+
+<ParamField body="replyId" type="CommentId" required>
+  Id of the reply to delete.
+</ParamField>
+
+<ResponseField name="return value" type="boolean">
+  `false` when either id does not resolve. `true` when the reply was removed.
+</ResponseField>
+
+Fires `onReplyDeleted(comment, reply)` and `{ type: "reply:deleted" }` on `onChange`.
+
+```ts
+const removed = overlay.deleteReply(commentId, replyId);
+// removed === false if either id was unknown
+```
+
+---
+
+### `editComment()`
+
+Rewrites a comment's text and stamps `editedAt` with the current ISO timestamp.
+
+```ts
+editComment(id: CommentId, text: string): boolean
+```
+
+<ParamField body="id" type="CommentId" required>
+  Id of the comment to edit.
+</ParamField>
+
+<ParamField body="text" type="string" required>
+  The new text. Leading and trailing whitespace is trimmed before comparison and before saving.
+</ParamField>
+
+<ResponseField name="return value" type="boolean">
+  `false` when the id is unknown, the trimmed text is blank, or the text is identical to the current value. `true` when the edit was applied.
+</ResponseField>
+
+Fires `onCommentEdited(comment)` and `{ type: "comment:edited" }` on `onChange`.
+
+```ts
+const ok = overlay.editComment(id, "Updated text");
+// ok === false if id unknown, text blank, or nothing changed
+```
+
+---
+
+### `editReply()`
+
+Rewrites a reply's text. Same contract as `editComment`, one level down.
+
+```ts
+editReply(
+  commentId: CommentId,
+  replyId: CommentId,
+  text: string
+): boolean
+```
+
+<ParamField body="commentId" type="CommentId" required>
+  Id of the parent comment.
+</ParamField>
+
+<ParamField body="replyId" type="CommentId" required>
+  Id of the reply to edit.
+</ParamField>
+
+<ParamField body="text" type="string" required>
+  The new text. Trimmed before comparison; blank or unchanged returns `false`.
+</ParamField>
+
+<ResponseField name="return value" type="boolean">
+  `false` when either id is unknown, the text is blank, or the text is unchanged. `true` when the edit was applied.
+</ResponseField>
+
+Fires `onReplyEdited(comment, reply)` and `{ type: "reply:edited" }` on `onChange`.
+
+```ts
+overlay.editReply(commentId, replyId, "Clarified wording");
+```
+
+---
+
+### `commentLink()`
+
+Returns the shareable URL for a comment — the same URL that "Copy link" in the widget UI puts on the clipboard. The URL includes the configured `linkParam` query parameter with the comment's id. Opening it anywhere the comments are available opens the inbox on that comment's thread.
+
+```ts
+commentLink(id: CommentId): string | null
+```
+
+<ParamField body="id" type="CommentId" required>
+  Id of the comment.
+</ParamField>
+
+<ResponseField name="return value" type="string | null">
+  The full shareable URL string (based on the current `location.href`), or `null` when the id does not resolve to a known comment.
+</ResponseField>
+
+```ts
+const url = overlay.commentLink(comment.id);
+if (url) {
+  navigator.clipboard.writeText(url);
+}
+// Example output: "https://example.com/pricing?helldotsComment=V1StGXR8_Z5jdHi6B-myT"
+```
+
+---
+
+### `serializeComments()`
+
+Returns a serializable snapshot of every comment currently in the overlay. The live `container` DOM reference is replaced by the stored `anchor` descriptor; screenshots (data-URLs) are included.
+
+```ts
+serializeComments(): SerializedComment[]
+```
+
+<ResponseField name="return value" type="SerializedComment[]">
+  Array of plain JSON-serializable comment objects. Safe to pass directly to your API or to `JSON.stringify`. The output is a copy — mutating it does not affect the overlay's internal state.
+</ResponseField>
+
+```ts
+const payload = overlay.serializeComments();
+await api.post("/comments/bulk", payload);
+```
+
+---
+
+### `loadComments()`
+
+Restores serialized comments from a previous session or your backend. Each comment's anchor is resolved back to a live DOM element — a circle marker is rendered for successful anchors. Comments whose anchor cannot be resolved are kept as **orphans** (visible in the inbox, no on-page marker). Comments from a different pathname are kept as **inactive** (cross-page, not shown on this route).
+
+Loading the same comment id again replaces the previous copy — the operation is idempotent. `loadComments` alone never removes a comment that is in memory but absent from `data`; use `clearComments()` before `loadComments()` to do a full reconciliation.
+
+```ts
+loadComments(data: SerializedComment[]): {
+  anchored: number;
+  orphaned: number;
+  inactive: number;
+}
+```
+
+<ParamField body="data" type="SerializedComment[]" required>
+  Array of serialized comments, as returned by `serializeComments()` or your API. Malformed entries (missing `id` or non-string `text`) are skipped with a console warning.
+</ParamField>
+
+<ResponseField name="return value" type="{ anchored: number, orphaned: number, inactive: number }">
+  Counts of comments by how they resolved: `anchored` got a circle marker on the current page, `orphaned` could not re-attach to a DOM element, and `inactive` belong to a different pathname.
+</ResponseField>
+
+Fires `onAnchorLost(comment)` and `{ type: "comment:anchor-lost" }` for each orphaned comment.
+
+```ts
+const stored = await api.get("/comments");
+const { anchored, orphaned, inactive } = overlay.loadComments(stored);
+console.log(`Loaded: ${anchored} anchored, ${orphaned} orphaned, ${inactive} inactive`);
+```
+
+---
+
+### `notifyNavigation()`
+
+Re-syncs the widget after a client-side navigation. Reclassifies every comment against the new `location.pathname`, re-resolves anchors against the new DOM, rebuilds markers, and refreshes the inbox. Call it from your router's "after navigation" hook.
+
+Same-path calls are also useful: if your SPA re-rendered its route and replaced every DOM node, `notifyNavigation()` is the way to re-anchor comments against the new elements.
+
+```ts
+notifyNavigation(): {
+  anchored: number;
+  orphaned: number;
+  inactive: number;
+}
+```
+
+<ResponseField name="return value" type="{ anchored: number, orphaned: number, inactive: number }">
+  Same shape as `loadComments`: counts by anchor state after the re-sync.
+</ResponseField>
+
+Fires `onAnchorLost` for each comment that loses its anchor on the new page.
+
+```ts
+// React Router / Vue Router / etc.
+router.afterEach(() => overlay.notifyNavigation());
+```
+
+<Tip>
+  Set `autoDetectNavigation: true` in your options to have `notifyNavigation()` called automatically on `popstate` (back/forward). pushState navigation — the kind most SPA routers use — still needs an explicit call from your router's hook.
+</Tip>
+
+---
+
+### `clearComments()`
+
+Removes every comment at once: all page markers, all in-memory state, and (in `localStorage` persistence mode) all persisted entries. Does **not** fire any per-comment callbacks — the host initiated the bulk reset and does not need its own action echoed back.
+
+```ts
+clearComments(): void
+```
+
+The typical pattern before reconciling with a backend is `clearComments()` followed by `loadComments(freshData)`:
+
+```ts
+// Full reconciliation against a backend
+overlay.clearComments();
+const fresh = await api.get("/comments");
+overlay.loadComments(fresh);
+```
+
+<Warning>
+  `clearComments()` fires no `onCommentDeleted` callbacks. If your backend relies on those callbacks to mirror deletions, use `deleteComment(id)` per comment instead.
+</Warning>
+
+---
+
+### `deleteComment()`
+
+Removes a single comment: its page marker, its in-memory entry, and (in `localStorage` mode) its persisted record.
+
+```ts
+deleteComment(id: CommentId): boolean
+```
+
+<ParamField body="id" type="CommentId" required>
+  Id of the comment to delete.
+</ParamField>
+
+<ResponseField name="return value" type="boolean">
+  `false` when the id is unknown. `true` when the comment was removed.
+</ResponseField>
+
+Fires `onCommentDeleted(id)` and `{ type: "comment:deleted" }` on `onChange`.
+
+```ts
+const deleted = overlay.deleteComment(id);
+```
+
+---
+
+### `setCommentStatus()`
+
+Moves a comment through its lifecycle. Valid values are `"open"`, `"in_progress"`, and `"resolved"`. Resolving a comment stamps `resolvedAt` with the current timestamp and removes its on-page marker; reopening clears `resolvedAt` and restores the marker.
+
+```ts
+setCommentStatus(id: CommentId, status: CommentStatus): boolean
+```
+
+<ParamField body="id" type="CommentId" required>
+  Id of the comment.
+</ParamField>
+
+<ParamField body="status" type='"open" | "in_progress" | "resolved"' required>
+  The new lifecycle state.
+</ParamField>
+
+<ResponseField name="return value" type="boolean">
+  `false` when the id is unknown or the status string is not a valid `CommentStatus`. Returns `true` (without re-firing callbacks) when the comment is already in the requested state.
+</ResponseField>
+
+Fires `onCommentStatusChanged(comment)` and `{ type: "comment:status-changed" }` on `onChange`.
+
+```ts
+overlay.setCommentStatus(id, "resolved");   // stamps resolvedAt, hides marker
+overlay.setCommentStatus(id, "open");       // clears resolvedAt, restores marker
+overlay.setCommentStatus(id, "in_progress");
+```
+
+---
+
+### `setCommentType()`
+
+Categorises a comment. Pass `null` to return it to the neutral (unclassified) state.
+
+```ts
+setCommentType(id: CommentId, type: CommentType | null): boolean
+```
+
+<ParamField body="id" type="CommentId" required>
+  Id of the comment.
+</ParamField>
+
+<ParamField body="type" type='"bug" | "suggestion" | "question" | "improvement" | null' required>
+  The new type, or `null` to clear it.
+</ParamField>
+
+<ResponseField name="return value" type="boolean">
+  `false` when the id is unknown or the type string is not a valid `CommentType`. `true` when the change was applied.
+</ResponseField>
+
+Fires `onCommentUpdated(comment)` and `{ type: "comment:updated" }` on `onChange`.
+
+```ts
+overlay.setCommentType(id, "bug");
+overlay.setCommentType(id, null); // clears the type
+```
+
+---
+
+### `setCommentPriority()`
+
+Sets the priority of a comment. Pass `null` to return it to the neutral (unprioritised) state.
+
+```ts
+setCommentPriority(id: CommentId, priority: CommentPriority | null): boolean
+```
+
+<ParamField body="id" type="CommentId" required>
+  Id of the comment.
+</ParamField>
+
+<ParamField body="priority" type='"high" | "medium" | "low" | null' required>
+  The new priority, or `null` to clear it.
+</ParamField>
+
+<ResponseField name="return value" type="boolean">
+  `false` when the id is unknown or the priority string is not a valid `CommentPriority`. `true` when the change was applied.
+</ResponseField>
+
+Fires `onCommentUpdated(comment)` and `{ type: "comment:updated" }` on `onChange`.
+
+```ts
+overlay.setCommentPriority(id, "high");
+overlay.setCommentPriority(id, null); // clears the priority
+```
+
+---
+
+### `setCommentTags()`
+
+Replaces the free-form labels on a comment. Values are trimmed, lowercased, and de-duplicated automatically — `"Checkout"` and `"checkout "` resolve to the same tag.
+
+```ts
+setCommentTags(id: CommentId, tags: string[]): boolean
+```
+
+<ParamField body="id" type="CommentId" required>
+  Id of the comment.
+</ParamField>
+
+<ParamField body="tags" type="string[]" required>
+  New tag array. Pass an empty array to clear all tags. Non-array values return `false`.
+</ParamField>
+
+<ResponseField name="return value" type="boolean">
+  `false` when the id is unknown or `tags` is not an array. `true` when the tags were updated.
+</ResponseField>
+
+Fires `onCommentUpdated(comment)` and `{ type: "comment:updated" }` on `onChange`.
+
+```ts
+overlay.setCommentTags(id, ["checkout", "ios", "high-impact"]);
+overlay.setCommentTags(id, []); // clears all tags
+```
+
+---
+
+### `cleanup()`
+
+Removes the HellDots widget entirely from the page: all event listeners, all observers, all DOM elements (markers, toolbar, comment box, the `<helldots-root>` shadow host), and all injected stylesheets. After `cleanup()` the instance should be discarded.
+
+```ts
+cleanup(): void
+```
+
+Safe to call while the document is still loading — it cancels the deferred `DOMContentLoaded` mount so no zombie UI is created afterwards. This makes it safe for React 18 StrictMode's double-invoke pattern and for route-based mount/unmount cycles.
+
+```ts
+// React useEffect cleanup
+useEffect(() => {
+  const overlay = createCommentOverlay({ user, persistence: "localStorage" });
+  return () => overlay.cleanup();
+}, [user]);
+```
+
+```ts
+// Vue / framework on-unmount hook
+onUnmounted(() => overlay.cleanup());
+```
+
+<Warning>
+  After `cleanup()` is called, no other methods on the instance should be called. To re-mount HellDots, call `createCommentOverlay()` again — `cleanup()` removes the shadow host element so a new instance creates a fresh one.
+</Warning>
+
+---
+
+## Triage helpers
+
+The three classification setters work together. All fields are optional and neutral by default:
+
+```ts
+overlay.setCommentType(id, "bug");
+overlay.setCommentPriority(id, "high");
+overlay.setCommentTags(id, ["checkout", "ios"]);
+overlay.setCommentStatus(id, "resolved"); // stamps resolution time
+
+// Clear any field back to neutral
+overlay.setCommentType(id, null);
+overlay.setCommentPriority(id, null);
+overlay.setCommentTags(id, []);
+```
+
+The inbox filters on all three fields, combined with page and status. Resolved comments show how long they took, measured from `createdAt` to `resolvedAt`. Reopening a resolved comment clears `resolvedAt`.
+
+| Field      | Valid values                                               |
+| ---------- | ---------------------------------------------------------- |
+| `type`     | `"bug"`, `"suggestion"`, `"question"`, `"improvement"`, `null` |
+| `priority` | `"high"`, `"medium"`, `"low"`, `null`                      |
+| `tags`     | any strings — trimmed, lowercased, de-duplicated           |
+| `status`   | `"open"`, `"in_progress"`, `"resolved"`                    |

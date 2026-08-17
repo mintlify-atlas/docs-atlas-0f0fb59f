@@ -1,0 +1,182 @@
+---
+title: "Installing HellDots: npm, CDN, and TypeScript Setup"
+sidebarTitle: "Installation"
+description: "Add HellDots via npm, yarn, or pnpm, use the CDN UMD build without a bundler, and learn about ESM-only constraints, browsers, and TypeScript support."
+---
+
+HellDots is published to npm as the `helldots` package. You can install it with any Node-based package manager for use with a bundler, or load the self-contained UMD build from a CDN for projects that don't use a build step. This page covers every installation path, the module format constraints you need to know about, browser and runtime requirements, TypeScript setup, and server-side rendering safety.
+
+## Package manager install
+
+Install HellDots with npm, yarn, or pnpm:
+
+<CodeGroup>
+```bash npm
+npm install helldots
+```
+
+```bash yarn
+yarn add helldots
+```
+
+```bash pnpm
+pnpm add helldots
+```
+</CodeGroup>
+
+Once installed, import the factory function in any JavaScript or TypeScript file:
+
+```js
+import { createCommentOverlay } from "helldots";
+```
+
+The package's `exports` map resolves this to the ESM build (`dist/helldots.esm.js`) automatically — no extra configuration needed for Vite, Webpack 5, Rollup, esbuild, Next.js, Remix, or Astro.
+
+## CDN / no bundler
+
+If your project doesn't use a bundler, load the self-contained UMD build from unpkg. It exposes a `HellDots` global on `window`:
+
+```html
+<script src="https://unpkg.com/helldots"></script>
+<script>
+  HellDots.createCommentOverlay({ user: { name: "Ana" } });
+</script>
+```
+
+The UMD build is fully self-contained — all dependencies are bundled in. It is served from the `unpkg` field in `package.json`, which points to `dist/helldots.umd.js`. You can also pin to a specific version:
+
+```html
+<script src="https://unpkg.com/helldots@0.5.0/dist/helldots.umd.js"></script>
+```
+
+Or use jsDelivr as an alternative CDN:
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/helldots@0.5.0/dist/helldots.umd.js"></script>
+```
+
+<Note>
+  The `HellDots` global exposes `createCommentOverlay` and `CommentOverlay`. Use `HellDots.createCommentOverlay(options)` just as you would the named ESM export.
+</Note>
+
+## ESM only — no CommonJS build
+
+<Warning>
+  HellDots ships **ES modules only**. There is no CommonJS build.
+
+  ```js
+  // ❌ This will not work
+  const { createCommentOverlay } = require("helldots");
+
+  // ✅ Use ES module syntax instead
+  import { createCommentOverlay } from "helldots";
+  ```
+
+  If your project still targets CommonJS (for example, a Node.js script using `.cjs` files or a Jest config that hasn't been migrated), use the CDN UMD build or switch to dynamic `import()`:
+
+  ```js
+  // Dynamic import works in CommonJS contexts that support top-level await
+  const { createCommentOverlay } = await import("helldots");
+  ```
+</Warning>
+
+The package's `"type": "module"` declaration and `exports` map both point exclusively to the ESM artifact. This matches the native module systems of every modern bundler and browser.
+
+## Node and browser requirements
+
+### Node.js
+
+HellDots requires **Node 18 or later** (declared in `package.json` as `"engines": { "node": ">=18" }`). This requirement applies to tooling — running tests, server-side rendering, or any code path that imports the package in Node. The widget itself runs in the browser.
+
+### Browser support
+
+HellDots targets **modern evergreen browsers**: current and recent versions of Chrome, Edge, Firefox, and Safari. The widget relies on:
+
+- **Shadow DOM** — the entire UI mounts inside a `<helldots-root>` custom element with an open shadow root.
+- **ES module support** — if you use the ESM build directly via `<script type="module">`.
+- **`crypto.getRandomValues`** — used for comment ID generation; available in all modern browsers including non-secure contexts.
+- **`ResizeObserver`, `MutationObserver`, `IntersectionObserver`** — used for anchor re-resolution and marker positioning.
+
+There is no IE11, legacy Edge, or pre-Chromium support.
+
+## TypeScript
+
+TypeScript definitions ship directly with the package — no separate `@types/helldots` install is needed.
+
+```ts
+import { createCommentOverlay, CommentOverlay } from "helldots";
+import type {
+  CommentOverlayOptions,
+  SerializedComment,
+  ChangeEvent,
+  CommentStatus,
+  CommentType,
+  CommentPriority,
+  CommentAnchor,
+  CommentContext,
+} from "helldots";
+```
+
+The `exports` map resolves types via the `"types"` condition (`dist/index.d.ts`), which TypeScript 4.7+ and all modern editors pick up automatically with no `tsconfig.json` changes.
+
+Key types to know:
+
+| Type | Description |
+|---|---|
+| `CommentOverlayOptions` | Full options object passed to `createCommentOverlay` |
+| `SerializedComment` | Plain-JSON comment shape returned by `serializeComments()` and accepted by `loadComments()` |
+| `ChangeEvent` | Discriminated union of all change events — switch on `event.type` to narrow the payload |
+| `CommentStatus` | `"open" \| "in_progress" \| "resolved"` |
+| `CommentType` | `"bug" \| "suggestion" \| "question" \| "improvement"` |
+| `CommentPriority` | `"high" \| "medium" \| "low"` |
+
+`ChangeEvent` is a discriminated union, so TypeScript narrows automatically:
+
+```ts
+import { createCommentOverlay } from "helldots";
+import type { ChangeEvent } from "helldots";
+
+createCommentOverlay({
+  onChange: (event: ChangeEvent) => {
+    switch (event.type) {
+      case "comment:created":
+        // event.comment is SerializedComment
+        console.log(event.comment.id);
+        break;
+      case "reply:added":
+        // event.comment and event.reply are both available
+        console.log(event.reply.text);
+        break;
+      case "comment:deleted":
+        // event.id is CommentId
+        console.log(event.id);
+        break;
+    }
+  },
+});
+```
+
+## Server-side rendering safety
+
+HellDots is safe to import in server-side rendering environments. **Nothing touches the DOM at import time** — the package is declared `"sideEffects": false` and `createCommentOverlay` defers all DOM work until `DOMContentLoaded`. You can import the module in a Next.js Server Component, a Remix loader, or an Astro layout without causing hydration errors or `document is not defined` exceptions.
+
+Call `createCommentOverlay` from the client only:
+
+```jsx
+// Works in Next.js, Remix, Astro, and any SSR framework
+import { useEffect } from "react";
+import { createCommentOverlay } from "helldots";
+
+export function Comments({ user }) {
+  useEffect(() => {
+    const overlay = createCommentOverlay({ user, persistence: "localStorage" });
+    return () => overlay.cleanup();
+  }, [user]);
+
+  return null;
+}
+```
+
+The `cleanup()` call in the effect's teardown function correctly handles React 18 StrictMode double-invocation — `cleanup()` called before the DOM mounts cancels the deferred mount, so no zombie overlay is left running.
+
+For patterns specific to Next.js App Router, Remix, and Astro, see [SSR Frameworks](/guides/ssr-frameworks).
