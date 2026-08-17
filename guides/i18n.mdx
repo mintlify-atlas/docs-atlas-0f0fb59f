@@ -1,10 +1,10 @@
 ---
 title: "Localizing the HellDots comment widget for your users"
 sidebarTitle: "Internationalization"
-description: "Use English or Spanish via locale, supply a partial strings object for any other language, and use per-key English fallback for any key you don't supply."
+description: "Set the HellDots UI language via locale, auto-detected from navigator.language. English and Spanish ship; unknown codes fall back to English per key."
 ---
 
-HellDots renders a small set of UI strings — toolbar labels, inbox headings, status names, confirmation messages, and timestamps. All of them are localized through the `locale` option, and none are hardcoded in the widget's output. Two locales ship today, and you can supply custom strings for any language by passing a partial or complete strings object.
+HellDots renders a small set of UI strings — toolbar labels, inbox headings, status names, confirmation messages, and timestamps. All of them are localized through the `locale` option, and none are hardcoded in the widget's output. Two locales ship today: English and Spanish. Unknown locale codes degrade gracefully to English with per-key fallback rather than rendering broken UI.
 
 ## The `locale` option
 
@@ -44,29 +44,7 @@ The locale detection reads the first two characters of `navigator.language`, low
 If you pass a locale code that isn't `"en"` or `"es"`, HellDots falls back to English on a per-key basis. This means:
 
 - A completely unknown locale (`"fr"`, `"de"`, `"ja"`) renders all strings in English.
-- A partial custom strings object (see below) renders your provided strings for the keys you supply, and English for any keys you omit.
 - Nothing breaks — the widget never renders `undefined` or an empty label.
-
-## Custom locale strings
-
-Pass a `strings` object alongside `locale` to override individual keys or supply a full translation for a language that doesn't ship with HellDots. You only need to provide the keys you want to change — any key you omit falls back to English.
-
-```js
-createCommentOverlay({
-  user: { name: "Ana" },
-  locale: "fr",
-  strings: {
-    toolbarComment: "Commenter",
-    toolbarInbox: "Boîte de réception",
-    send: "Envoyer",
-    close: "Fermer",
-    statusOpen: "Ouvert",
-    statusInProgress: "En cours",
-    statusResolved: "Résolu",
-    // Any keys you omit fall back to English
-  },
-});
-```
 
 ## The English locale structure
 

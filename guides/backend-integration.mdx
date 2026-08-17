@@ -68,7 +68,7 @@ If your backend has separate endpoints for each operation, the individual callba
 | `onReplyDeleted(comment, reply)` | A reply is removed | `SerializedComment`, `CommentReply` |
 | `onCommentEdited(comment)` | A comment's text is rewritten | `SerializedComment` |
 | `onReplyEdited(comment, reply)` | A reply's text is rewritten | `SerializedComment`, `CommentReply` |
-| `onCommentStatusChanged(comment)` | Status moves between open / in_progress / resolved | `SerializedComment` |
+| `onCommentStatusChanged(comment)` | Status moves between open / in progress / resolved | `SerializedComment` |
 | `onCommentUpdated(comment)` | Type, priority, or tags change | `SerializedComment` |
 | `onCommentDeleted(id)` | A comment is removed | `CommentId` |
 | `onAnchorLost(comment)` | A comment could not be re-anchored on load | `SerializedComment` |

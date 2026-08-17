@@ -111,7 +111,7 @@ When comments can be deleted elsewhere (another user, a server-side job, an admi
 
 ```js
 async function refresh(overlay) {
-  const { data: fresh } = await fetch("/api/comments").then((r) => r.json());
+  const fresh = await fetch("/api/comments").then((r) => r.json());
 
   overlay.clearComments();         // wipe local state — no callbacks fired
   overlay.loadComments(fresh);     // restore authoritative server state
